@@ -26,7 +26,7 @@ const ACCEPT_COMMANDS = [
 // Future-proof against <vscode-button>, <ag-btn>, etc.
 // Build the CDP script dynamically to inject custom button texts
 function buildPermissionScript(customTexts) {
-    const allTexts = ['always allow', 'allow this conversation', 'allow', 'accept', ...customTexts];
+    const allTexts = ['always allow', 'always run', 'allow this conversation', 'allow', 'accept', 'run', 'continue', 'proceed', ...customTexts];
     return `
 (function() {
     var BUTTON_TEXTS = ${JSON.stringify(allTexts)};
