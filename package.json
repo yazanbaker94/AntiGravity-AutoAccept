@@ -1,8 +1,8 @@
 {
-    "name": "auto-accept-v2",
-    "displayName": "Auto Accept Agent V2",
+    "name": "antigravity-autoaccept",
+    "displayName": "AntiGravity AutoAccept",
     "description": "Auto-accept agent steps using Antigravity's native VS Code commands. Zero DOM scraping, zero UI interference.",
-    "version": "2.1.0",
+    "version": "1.0.0",
     "publisher": "YazanBaker",
     "icon": "images/icon.png",
     "engines": {

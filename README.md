@@ -27,7 +27,7 @@ When the Antigravity agent proposes file edits, terminal commands, or asks for t
 
 ### From VSIX (recommended)
 
-1. Download the latest `.vsix` from [Releases](https://github.com/YazanBaker/auto-accept-antigravity/releases)
+1. Download the latest `.vsix` from [Releases](https://github.com/yazanbaker94/AntiGravity-AutoAccept/releases/)
 2. In Antigravity: `Ctrl+Shift+P` → `Extensions: Install from VSIX`
 3. Select the downloaded file
 4. Reload Window
