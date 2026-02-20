@@ -1,4 +1,7 @@
 **/*.test.js
 test/
-node_modules/
 .vscode/
+.git/
+.github/
+.agent/
+*.vsix
