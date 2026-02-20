@@ -1,4 +1,4 @@
-# Auto Accept for Antigravity
+# AntiGravity AutoAccept
 
 Automatically accept agent steps, terminal commands, file edits, and permission prompts in [Antigravity](https://antigravity.dev) — Google's AI coding assistant.
 
@@ -36,7 +36,7 @@ When the Antigravity agent proposes file edits, terminal commands, or asks for t
 
 1. Copy `extension.js` and `package.json` to:
    ```
-   ~/.antigravity/extensions/YazanBaker.auto-accept-v2-2.1.0/
+   ~/.antigravity/extensions/YazanBaker.antigravity-autoaccept-1.0.0/
    ```
 2. Run `npm install` in that directory (installs `ws` dependency)
 3. Reload Window
@@ -44,8 +44,8 @@ When the Antigravity agent proposes file edits, terminal commands, or asks for t
 ## Usage
 
 - **Toggle:** Click `⚡ Auto: ON` / `✕ Auto: OFF` in the status bar
-- **Or:** `Ctrl+Shift+P` → `Auto Accept V2: Toggle ON/OFF`
-- **Logs:** Output panel → `Auto Accept V2`
+- **Or:** `Ctrl+Shift+P` → `AntiGravity AutoAccept: Toggle ON/OFF`
+- **Logs:** Output panel → `AntiGravity AutoAccept`
 
 ## Settings
 
@@ -92,7 +92,7 @@ Commands deliberately **excluded** to prevent harm:
 
 ```
 ┌──────────────────────────────────────────┐
-│  Auto Accept V2.1                        │
+│  AntiGravity AutoAccept v1.0.0           │
 │  ~235 lines │ ~10KB │ YazanBaker         │
 ├──────────────────────────────────────────┤
 │                                          │
@@ -104,7 +104,7 @@ Commands deliberately **excluded** to prevent harm:
 │  Strategy 2: Targeted CDP (1500ms)       │
 │  ├─ Shadow DOM piercing TreeWalker       │
 │  ├─ data-testid priority (i18n-safe)     │
-│  ├─ 3 button texts + custom setting     │
+│  ├─ 8 button texts + custom setting      │
 │  ├─ Fuzzy panel selector                 │
 │  └─ Handles permission dialogs only      │
 │                                          │
