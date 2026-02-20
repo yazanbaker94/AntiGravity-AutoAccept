@@ -1,0 +1,61 @@
+{
+    "name": "auto-accept-v2",
+    "displayName": "Auto Accept Agent V2",
+    "description": "Auto-accept agent steps using Antigravity's native VS Code commands. Zero DOM scraping, zero UI interference.",
+    "version": "2.1.0",
+    "publisher": "YazanBaker",
+    "icon": "images/icon.png",
+    "engines": {
+        "vscode": "^1.68.0"
+    },
+    "categories": [
+        "Other"
+    ],
+    "activationEvents": [
+        "*"
+    ],
+    "main": "./extension.js",
+    "contributes": {
+        "commands": [
+            {
+                "command": "autoAcceptV2.toggle",
+                "title": "Auto Accept V2: Toggle ON/OFF"
+            }
+        ],
+        "configuration": {
+            "title": "Auto Accept V2",
+            "properties": {
+                "autoAcceptV2.pollInterval": {
+                    "type": "number",
+                    "default": 500,
+                    "description": "Polling interval in milliseconds"
+                },
+                "autoAcceptV2.customButtonTexts": {
+                    "type": "array",
+                    "default": [],
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "Extra button texts to auto-click (for i18n or custom UI). E.g. ['toujours autoriser', 'siempre permitir']"
+                }
+            }
+        }
+    },
+    "scripts": {
+        "test": "echo \"Error: no test specified\" && exit 1"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/ai-dev-2024/AUTO-ALL-AntiGravity.git"
+    },
+    "keywords": [],
+    "author": "",
+    "license": "ISC",
+    "bugs": {
+        "url": "https://github.com/ai-dev-2024/AUTO-ALL-AntiGravity/issues"
+    },
+    "homepage": "https://github.com/ai-dev-2024/AUTO-ALL-AntiGravity#readme",
+    "dependencies": {
+        "ws": "^8.19.0"
+    }
+}

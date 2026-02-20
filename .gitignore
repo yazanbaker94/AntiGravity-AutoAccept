@@ -1,0 +1,16 @@
+node_modules
+dist
+out
+*.vsix
+.agent
+*.code-workspace
+.DS_Store
+.vscode-test
+vsc-extension-quickstart.md
+.gemini
+package-lock.json
+.env
+temp_vsix
+vsix_check
+temp_extract
+*.zip
