@@ -37,7 +37,7 @@ The extension needs Chrome DevTools Protocol to click buttons. On first launch, 
 **Manual:**
 1. Copy `extension.js` and `package.json` to:
    ```
-   ~/.antigravity/extensions/YazanBaker.antigravity-autoaccept-1.18.3/
+   ~/.antigravity/extensions/YazanBaker.antigravity-autoaccept-1.18.4/
    ```
 2. Run `npm install` in that directory (installs `ws` dependency)
 3. Reload Window
@@ -83,6 +83,19 @@ Commands deliberately **excluded** to prevent harm:
 - `chatEditing.acceptAllFiles` — causes sidebar Outline toggling
 - All merge/git conflict commands — could silently pick wrong side
 - All autocomplete/suggestion commands — would corrupt typing
+
+## Security FAQ
+
+**Why does this need `--remote-debugging-port`?**
+
+Antigravity's agent panel runs in an isolated Chromium process. The VS Code Extension API cannot see or interact with the Run/Accept/Allow buttons inside it — they're React UI elements with no registered commands. Chrome DevTools Protocol (CDP) on port 9222 is the only way to reach them.
+
+**Is it safe?**
+
+- **Localhost only** — the port binds to `127.0.0.1`, not `0.0.0.0`. No external machine can connect.
+- **Fully open source** — all ~500 lines are on GitHub. The extension finds buttons by text and clicks them. No data is read, no network requests, no telemetry.
+- **Standard dev workflow** — `--remote-debugging-port` is the same flag used by VS Code extension developers and Electron app debugging.
+- **Shortcut patcher is scoped** — the auto-fix only modifies `.lnk` files whose target path contains "Antigravity".
 
 ## License
 

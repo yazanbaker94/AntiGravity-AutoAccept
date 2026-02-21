@@ -1,4 +1,4 @@
-// AntiGravity AutoAccept v1.18.3
+// AntiGravity AutoAccept v1.18.4
 // Primary: VS Code Commands API with async lock
 // Secondary: Shadow DOM-piercing CDP for permission & action buttons
 
@@ -25,7 +25,6 @@ function buildPermissionScript(customTexts) {
     const allTexts = [
         'run', 'accept',  // Primary action buttons first ("Run Alt+d", "Accept")
         'always allow', 'allow this conversation', 'allow',
-        'continue', 'proceed',
         ...customTexts
     ];
     return `
@@ -89,11 +88,22 @@ function buildPermissionScript(customTexts) {
         return null;
     }
     
+    // ═══ PASS 1: Search for ACTION buttons (Run, Accept, Allow, etc.) ═══
     for (var t = 0; t < BUTTON_TEXTS.length; t++) {
         var btn = findButton(document.body, BUTTON_TEXTS[t]);
         if (btn) {
             btn.click();
             return 'clicked:' + BUTTON_TEXTS[t];
+        }
+    }
+    
+    // ═══ PASS 2: No action buttons found — click Expand to reveal them ═══
+    var expandTexts = ['expand', 'requires input'];
+    for (var e = 0; e < expandTexts.length; e++) {
+        var expBtn = findButton(document.body, expandTexts[e]);
+        if (expBtn) {
+            expBtn.click();
+            return 'clicked:' + expandTexts[e];
         }
     }
     return 'no-permission-button';
@@ -108,6 +118,7 @@ let pollIntervalId = null;
 let cdpIntervalId = null;
 let statusBarItem = null;
 let outputChannel = null;
+let lastExpandTime = 0; // Cooldown to prevent expand toggle loop
 
 function log(msg) {
     if (outputChannel) {
@@ -300,6 +311,11 @@ async function checkPermissionButtons() {
                     try {
                         const result = await cdpEvaluate(pages[i].webSocketDebuggerUrl, script);
                         if (result && result.startsWith('clicked:')) {
+                            // Skip expand clicks during cooldown (prevents toggle loop)
+                            if (result.startsWith('clicked:expand') || result.startsWith('clicked:requires input')) {
+                                if (Date.now() - lastExpandTime < 8000) continue; // still cooling down
+                                lastExpandTime = Date.now();
+                            }
                             log(`[CDP] ✓ ${result}`);
                             return;
                         }
@@ -472,7 +488,7 @@ function applyTemporarySessionRestart() {
 // ─── Activation ───────────────────────────────────────────────────────
 function activate(context) {
     outputChannel = vscode.window.createOutputChannel('AntiGravity AutoAccept');
-    log('Extension activating (v1.18.3)');
+    log('Extension activating (v1.18.4)');
 
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     statusBarItem.command = 'autoAcceptV2.toggle';
