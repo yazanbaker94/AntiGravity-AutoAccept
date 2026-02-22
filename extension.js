@@ -74,6 +74,9 @@ function buildPermissionScript(customTexts) {
                 }
             }
             var nodeText = (node.textContent || '').trim().toLowerCase();
+            // Length cap: real buttons have short text (< 50 chars).
+            // Skip large container elements that happen to start with button text.
+            if (nodeText.length > 50) continue;
             if (nodeText === text || (text.length >= 3 && nodeText.startsWith(text))) {
                 var clickable = closestClickable(node);
                 var tag2 = (clickable.tagName || '').toLowerCase();
@@ -81,6 +84,11 @@ function buildPermissionScript(customTexts) {
                     tag2.includes('btn') || clickable.classList.contains('cursor-pointer') ||
                     clickable.onclick || clickable.getAttribute('tabindex') === '0' ||
                     text === 'expand' || text === 'requires input') {
+                    // Idempotency guard: skip disabled/loading buttons
+                    if (clickable.disabled || clickable.getAttribute('aria-disabled') === 'true' ||
+                        clickable.classList.contains('loading') || clickable.querySelector('.codicon-loading')) {
+                        return null;
+                    }
                     return clickable;
                 }
             }
@@ -119,6 +127,7 @@ let cdpIntervalId = null;
 let statusBarItem = null;
 let outputChannel = null;
 let lastExpandTime = 0; // Cooldown to prevent expand toggle loop
+let isCdpBusy = false; // Async lock for CDP polling — prevents overlapping broadcasts
 
 function log(msg) {
     if (outputChannel) {
@@ -167,7 +176,17 @@ function cdpEvaluate(wsUrl, expression) {
             if (msg.id === 1) {
                 clearTimeout(timeout);
                 ws.close();
-                resolve(msg.result?.result?.value || '');
+                const val = msg.result?.result?.value;
+                const type = msg.result?.result?.type;
+                const sub = msg.result?.result?.subtype;
+                const exc = msg.result?.exceptionDetails;
+                if (!val) {
+                    const errDesc = msg.result?.result?.description || '';
+                    const excText = exc?.text || '';
+                    const excLine = exc?.lineNumber || '';
+                    log(`[CDP-DBG] type=${type} sub=${sub} err=${errDesc.substring(0, 100)} exc=${excText} line=${excLine}`);
+                }
+                resolve(val || '');
             }
         });
         ws.on('error', () => { clearTimeout(timeout); reject(new Error('ws-error')); });
@@ -305,21 +324,23 @@ async function checkPermissionButtons() {
             try {
                 const pages = await cdpGetPages(port);
                 if (pages.length === 0) continue;
-                // Evaluate on all targets — the Webview Guard inside the script
-                // handles isolation (non-webview targets return 'ignored-main-window')
+                log(`[CDP] Port ${port}: ${pages.length} targets`);
                 for (let i = 0; i < pages.length; i++) {
                     try {
                         const result = await cdpEvaluate(pages[i].webSocketDebuggerUrl, script);
+                        log(`[CDP] [${i}] => ${result}`);
                         if (result && result.startsWith('clicked:')) {
-                            // Skip expand clicks during cooldown (prevents toggle loop)
+                            // Expand cooldown (prevents toggle loop)
                             if (result.startsWith('clicked:expand') || result.startsWith('clicked:requires input')) {
-                                if (Date.now() - lastExpandTime < 8000) continue; // still cooling down
+                                if (Date.now() - lastExpandTime < 8000) continue;
                                 lastExpandTime = Date.now();
                             }
                             log(`[CDP] ✓ ${result}`);
                             return;
                         }
-                    } catch (e) { /* next webview */ }
+                    } catch (e) {
+                        log(`[CDP] [${i}] ERROR: ${e.message}`);
+                    }
                 }
                 return;
             } catch (e) { /* next port */ }
@@ -335,20 +356,24 @@ function startPolling() {
     const interval = config.get('pollInterval', 500);
     log(`Polling started (every ${interval}ms, ${ACCEPT_COMMANDS.length} commands)`);
 
-    // VS Code commands — with async lock to prevent double-accepts
+    // VS Code commands — with async lock and safety timeout
     pollIntervalId = setInterval(async () => {
         if (!isEnabled || isAccepting) return;
         isAccepting = true;
+        // Safety timeout: force-release lock after 3s if commands hang
+        const safetyTimer = setTimeout(() => { isAccepting = false; }, 3000);
         try {
             await Promise.allSettled(
                 ACCEPT_COMMANDS.map(cmd => vscode.commands.executeCommand(cmd))
             );
-        } finally {
+        } catch (e) { /* silent */ }
+        finally {
+            clearTimeout(safetyTimer);
             isAccepting = false;
         }
     }, interval);
 
-    // CDP permission polling (slower cadence)
+    // CDP permission polling
     cdpIntervalId = setInterval(() => {
         checkPermissionButtons();
     }, 1500);
