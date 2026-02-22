@@ -126,7 +126,7 @@ let pollIntervalId = null;
 let cdpIntervalId = null;
 let statusBarItem = null;
 let outputChannel = null;
-let lastExpandTime = 0; // Cooldown to prevent expand toggle loop
+let lastExpandTimes = {}; // Per-target cooldown to prevent expand toggle loops
 let isCdpBusy = false; // Async lock for CDP polling — prevents overlapping broadcasts
 
 function log(msg) {
@@ -315,37 +315,62 @@ async function clickBannerViaDom(wsUrl) {
 const CDP_PORTS = [9222, 9229, ...Array.from({ length: 15 }, (_, i) => 9000 + i)];
 
 async function checkPermissionButtons() {
-    if (!isEnabled) return;
+    // Async lock: prevent 1500ms intervals from overlapping if Chrome is slow
+    if (!isEnabled || isCdpBusy) return;
+    isCdpBusy = true;
+
     const config = vscode.workspace.getConfiguration('autoAcceptV2');
     const customTexts = config.get('customButtonTexts', []);
     const script = buildPermissionScript(customTexts);
+
     try {
         for (const port of CDP_PORTS) {
             try {
                 const pages = await cdpGetPages(port);
                 if (pages.length === 0) continue;
-                log(`[CDP] Port ${port}: ${pages.length} targets`);
-                for (let i = 0; i < pages.length; i++) {
+
+                // Filter for webviews only — skip service workers & main window
+                const webviews = pages.filter(p => p.url && p.url.includes('vscode-webview://'));
+                log(`[CDP] Port ${port}: ${pages.length} targets, ${webviews.length} webviews`);
+                if (webviews.length === 0) continue;
+
+                // Concurrent broadcast: fire script at ALL webviews simultaneously
+                const clickPromises = webviews.map(async (page) => {
                     try {
-                        const result = await cdpEvaluate(pages[i].webSocketDebuggerUrl, script);
-                        log(`[CDP] [${i}] => ${result}`);
+                        const result = await cdpEvaluate(page.webSocketDebuggerUrl, script);
+                        const shortId = (page.id || '').substring(0, 6) || 'unknown';
+
                         if (result && result.startsWith('clicked:')) {
-                            // Expand cooldown (prevents toggle loop)
-                            if (result.startsWith('clicked:expand') || result.startsWith('clicked:requires input')) {
-                                if (Date.now() - lastExpandTime < 8000) continue;
-                                lastExpandTime = Date.now();
+                            const targetId = page.id || page.webSocketDebuggerUrl;
+
+                            // Per-target expand cooldown (prevents toggle loop per chat)
+                            if (result.includes('expand') || result.includes('requires input')) {
+                                const now = Date.now();
+                                if (lastExpandTimes[targetId] && (now - lastExpandTimes[targetId] < 8000)) {
+                                    return; // This specific chat is cooling down
+                                }
+                                lastExpandTimes[targetId] = now;
                             }
-                            log(`[CDP] ✓ ${result}`);
-                            return;
+
+                            log(`[CDP] ✓ Thread [${shortId}] -> ${result}`);
                         }
                     } catch (e) {
-                        log(`[CDP] [${i}] ERROR: ${e.message}`);
+                        // Silently swallow per-target errors
                     }
-                }
+                });
+
+                // Wait for all targets to finish evaluating
+                await Promise.allSettled(clickPromises);
+
+                // Successfully processed this CDP port
+                isCdpBusy = false;
                 return;
-            } catch (e) { /* next port */ }
+            } catch (e) { /* try next port */ }
         }
     } catch (e) { /* silent */ }
+    finally {
+        isCdpBusy = false; // Release lock
+    }
 }
 
 // ─── Polling with Async Lock ──────────────────────────────────────────
