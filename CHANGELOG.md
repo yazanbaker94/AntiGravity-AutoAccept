@@ -1,13 +1,11 @@
 # Changelog
 
-## [1.18.5] — 2026-02-22
+## [1.18.4] — 2026-02-22
 
 ### Concurrent CDP Optimizations
 - **Fixed Cooldown Illusion**: Injected logic directly into the webview script to prevent the DOM from violently clicking the "Expand" banner every 1.5s while the Node.js orchestrator ignored the result on cooldown.
 - **Port Scanner Caching**: Caches the active CDP port (`activeCdpPort`) to eliminate 17 unnecessary failing HTTP requests every polling cycle when an agent panel isn't open.
 - **Removed Dead Code**: Deleted 120+ lines of deprecated coordinate-clicking code (`cdpSendMulti`, `clickBannerViaDom`) to save memory and reduce extension size.
-
----
 
 ## [1.18.4] — 2026-02-22
 
