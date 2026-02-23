@@ -87,6 +87,33 @@ On activation, the extension checks if port 9222 is open. If not, it shows a not
 - **Auto-Fix Shortcut (Windows)** — patches your `.lnk` shortcut via PowerShell
 - **Manual Guide** — links to this README
 
+## Troubleshooting
+
+### Bot stops working after a few hours
+
+**Cause:** Antigravity silently restarts its Electron process (auto-updates, memory pressure, or extension host crash). The new process doesn't have `--remote-debugging-port=9222`.
+
+**Fix:** Close **all** Antigravity windows completely, then reopen from your patched shortcut. A simple Reload Window (`Ctrl+Shift+P` → Reload) won't fix this — you need a full restart.
+
+### Bot is ON but not clicking anything
+
+1. **Toggle OFF → ON** — click the status bar icon twice to restart polling
+2. **Check the debug port** — visit `http://127.0.0.1:9222/json/list` in a browser. If it refuses, the debug port is dead (see above)
+3. **Check Output logs** — `Ctrl+Shift+U` → dropdown → `AntiGravity AutoAccept`. Look for `[CDP] ✓ Thread` lines. If there are none, CDP can't find the agent panel
+
+### Log shows repeated `clicked:run` but nothing happens
+
+**Cause:** The script is matching a static text element instead of the real Run button. Short terms like `run` require an exact text match to limit false positives. If you still see spam, the 5-second per-element cooldown (`data-aa-t`) should suppress it after the first click.
+
+**Fix:** Update to the latest version — this was fixed in v1.18.4.
+
+### Status bar icon not showing after install
+
+1. Run `Ctrl+Shift+P` → `Reload Window`
+2. Check that the VSIX was built **with** dependencies (the `ws` package must be included)
+
+---
+
 ## Safety
 
 Commands deliberately **excluded** to prevent harm:
