@@ -1,6 +1,6 @@
 // AntiGravity AutoAccept v1.18.4
 // Primary: VS Code Commands API with async lock
-// Secondary: Shadow DOM-piercing CDP for permission & action buttons
+// Secondary: Browser-level CDP session multiplexer for permission & action buttons
 
 const vscode = require('vscode');
 const http = require('http');
@@ -58,12 +58,12 @@ function buildPermissionScript(customTexts) {
         return node;
     }
     
-    function findButton(root, text) {
+    function findButton(root, text, useIncludes) {
         var walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
         var node;
         while ((node = walker.nextNode())) {
             if (node.shadowRoot) {
-                var result = findButton(node.shadowRoot, text);
+                var result = findButton(node.shadowRoot, text, useIncludes);
                 if (result) return result;
             }
             var testId = (node.getAttribute('data-testid') || node.getAttribute('data-action') || '').toLowerCase();
@@ -77,7 +77,7 @@ function buildPermissionScript(customTexts) {
             // Length cap: real buttons have short text (< 50 chars).
             // Skip large container elements that happen to start with button text.
             if (nodeText.length > 50) continue;
-            if (nodeText === text || (text.length >= 3 && nodeText.startsWith(text))) {
+            if (nodeText === text || (text.length >= 3 && (useIncludes ? nodeText.includes(text) : nodeText.startsWith(text)))) {
                 var clickable = closestClickable(node);
                 var tag2 = (clickable.tagName || '').toLowerCase();
                 if (tag2 === 'button' || tag2.includes('button') || clickable.getAttribute('role') === 'button' || 
@@ -106,12 +106,15 @@ function buildPermissionScript(customTexts) {
     }
     
     // ═══ PASS 2: No action buttons found — click Expand to reveal them ═══
-    var expandTexts = ['expand', 'requires input'];
-    for (var e = 0; e < expandTexts.length; e++) {
-        var expBtn = findButton(document.body, expandTexts[e]);
-        if (expBtn) {
-            expBtn.click();
-            return 'clicked:' + expandTexts[e];
+    // Only attempt to expand if the Node.js orchestrator allows it this cycle
+    if (typeof CAN_EXPAND === 'undefined' || CAN_EXPAND) {
+        var expandTexts = ['expand', 'requires input'];
+        for (var e = 0; e < expandTexts.length; e++) {
+            var expBtn = findButton(document.body, expandTexts[e], true);
+            if (expBtn) {
+                expBtn.click();
+                return 'clicked:' + expandTexts[e];
+            }
         }
     }
     return 'no-permission-button';
@@ -128,6 +131,7 @@ let statusBarItem = null;
 let outputChannel = null;
 let lastExpandTimes = {}; // Per-target cooldown to prevent expand toggle loops
 let isCdpBusy = false; // Async lock for CDP polling — prevents overlapping broadcasts
+let activeCdpPort = null; // Caches the successful port to prevent over-scanning
 
 function log(msg) {
     if (outputChannel) {
@@ -148,15 +152,24 @@ function updateStatusBar() {
     }
 }
 
-// ─── CDP Helpers ──────────────────────────────────────────────────────
-function cdpGetPages(port) {
+// ─── CDP: Browser-Level Session Multiplexer ──────────────────────────
+// Uses the browser-level WebSocket (/json/version) to attach to page
+// targets and execute scripts inside windows with actual DOM access.
+
+// Wider port scan: 9000-9014 + common Chromium/Node defaults
+const CDP_PORTS = [9222, 9229, ...Array.from({ length: 15 }, (_, i) => 9000 + i)];
+
+// Get the browser-level WebSocket URL
+function cdpGetBrowserWsUrl(port) {
     return new Promise((resolve, reject) => {
-        const req = http.get({ hostname: '127.0.0.1', port, path: '/json/list', timeout: 500 }, (res) => {
+        const req = http.get({ hostname: '127.0.0.1', port, path: '/json/version', timeout: 800 }, (res) => {
             let data = '';
             res.on('data', chunk => data += chunk);
             res.on('end', () => {
-                try { resolve(JSON.parse(data).filter(p => p.webSocketDebuggerUrl)); }
-                catch (e) { reject(e); }
+                try {
+                    const info = JSON.parse(data);
+                    resolve(info.webSocketDebuggerUrl || null);
+                } catch (e) { reject(e); }
             });
         });
         req.on('error', reject);
@@ -164,212 +177,170 @@ function cdpGetPages(port) {
     });
 }
 
-function cdpEvaluate(wsUrl, expression) {
-    return new Promise((resolve, reject) => {
-        const ws = new WebSocket(wsUrl);
-        const timeout = setTimeout(() => { ws.close(); reject(new Error('timeout')); }, 2000);
-        ws.on('open', () => {
-            ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression } }));
-        });
-        ws.on('message', (data) => {
-            const msg = JSON.parse(data.toString());
-            if (msg.id === 1) {
-                clearTimeout(timeout);
-                ws.close();
-                const val = msg.result?.result?.value;
-                const type = msg.result?.result?.type;
-                const sub = msg.result?.result?.subtype;
-                const exc = msg.result?.exceptionDetails;
-                if (!val) {
-                    const errDesc = msg.result?.result?.description || '';
-                    const excText = exc?.text || '';
-                    const excLine = exc?.lineNumber || '';
-                    log(`[CDP-DBG] type=${type} sub=${sub} err=${errDesc.substring(0, 100)} exc=${excText} line=${excLine}`);
+function multiplexCdpWebviews(port, scriptGenerator) {
+    return new Promise(async (resolve) => {
+        try {
+            // 1. Get browser-level WebSocket
+            const browserWsUrl = await cdpGetBrowserWsUrl(port);
+            if (!browserWsUrl) return resolve(false);
+
+            const ws = new WebSocket(browserWsUrl);
+            const timeout = setTimeout(() => { ws.close(); resolve(false); }, 5000);
+
+            let msgId = 1;
+            const pending = {};
+
+            function send(method, params = {}, sessionId = null) {
+                return new Promise((res, rej) => {
+                    const id = msgId++;
+                    const timer = setTimeout(() => { delete pending[id]; rej(new Error('timeout')); }, 2000);
+                    pending[id] = { res: (v) => { clearTimeout(timer); res(v); }, rej };
+                    const payload = { id, method, params };
+                    if (sessionId) payload.sessionId = sessionId;
+                    ws.send(JSON.stringify(payload));
+                });
+            }
+
+            ws.on('message', (raw) => {
+                const msg = JSON.parse(raw.toString());
+                if (msg.id && pending[msg.id]) {
+                    pending[msg.id].res(msg);
+                    delete pending[msg.id];
                 }
-                resolve(val || '');
-            }
-        });
-        ws.on('error', () => { clearTimeout(timeout); reject(new Error('ws-error')); });
-    });
-}
+            });
 
-// Send multiple CDP commands over one WebSocket connection
-function cdpSendMulti(wsUrl, commands) {
-    return new Promise((resolve, reject) => {
-        const ws = new WebSocket(wsUrl);
-        const timeout = setTimeout(() => { ws.close(); reject(new Error('timeout')); }, 3000);
-        const results = {};
-        let nextId = 1;
-        const pending = [];
+            ws.on('error', () => { clearTimeout(timeout); resolve(false); });
 
-        ws.on('open', () => {
-            for (const cmd of commands) {
-                const id = nextId++;
-                cmd._id = id;
-                pending.push(id);
-                ws.send(JSON.stringify({ id, method: cmd.method, params: cmd.params || {} }));
-            }
-        });
-        ws.on('message', (data) => {
-            const msg = JSON.parse(data.toString());
-            if (msg.id) {
-                results[msg.id] = msg.result || msg.error;
-                const idx = pending.indexOf(msg.id);
-                if (idx !== -1) pending.splice(idx, 1);
-                if (pending.length === 0) {
+            ws.on('open', async () => {
+                try {
+                    // 2. Enable target discovery
+                    await send('Target.setDiscoverTargets', { discover: true });
+
+                    // 3. Get ALL targets from the browser level
+                    const targetsMsg = await send('Target.getTargets');
+                    const allTargets = targetsMsg.result?.targetInfos || [];
+
+
+
+                    // 4. Find webview targets
+                    let webviews = allTargets.filter(t =>
+                        t.url && (
+                            t.url.includes('vscode-webview://') ||
+                            t.url.includes('webview') ||
+                            t.type === 'iframe'
+                        )
+                    );
+
+                    // 5. No webview targets — attach to page targets and check for DOM
+                    if (webviews.length === 0) {
+                        const pageTargets = allTargets.filter(t => t.type === 'page');
+
+                        for (const page of pageTargets) {
+                            try {
+                                const attachMsg = await send('Target.attachToTarget', { targetId: page.targetId, flatten: true });
+                                const sessionId = attachMsg.result?.sessionId;
+                                if (!sessionId) continue;
+
+                                // Check if this page has DOM access
+                                const evalMsg = await send('Runtime.evaluate', {
+                                    expression: 'typeof document !== "undefined" ? document.title || "has-dom" : "no-dom"'
+                                }, sessionId);
+                                const domResult = evalMsg.result?.result?.value;
+
+                                // If page has DOM, run the clicker script
+                                if (domResult && domResult !== 'no-dom') {
+                                    const now = Date.now();
+                                    const canExpand = !lastExpandTimes[page.targetId] || (now - lastExpandTimes[page.targetId] >= 8000);
+                                    const dynamicScript = scriptGenerator(canExpand);
+                                    const scriptMsg = await send('Runtime.evaluate', { expression: dynamicScript }, sessionId);
+                                    const result = scriptMsg.result?.result?.value;
+
+                                    if (result && result.startsWith('clicked:')) {
+                                        if (result.includes('expand') || result.includes('requires input')) {
+                                            lastExpandTimes[page.targetId] = Date.now();
+                                        }
+                                        log(`[CDP] ✓ Thread [${page.targetId.substring(0, 6)}] -> ${result}`);
+                                    }
+                                }
+
+                                await send('Target.detachFromTarget', { sessionId }).catch(() => { });
+                            } catch (e) {
+                                // Silent — page may not support DOM access
+                            }
+                        }
+                    } else {
+
+                        // Tunnel into each webview concurrently
+                        const evalPromises = webviews.map(async (wv) => {
+                            try {
+                                const targetId = wv.targetId;
+                                const shortId = targetId.substring(0, 6);
+
+                                const attachMsg = await send('Target.attachToTarget', { targetId, flatten: true });
+                                const sessionId = attachMsg.result?.sessionId;
+                                if (!sessionId) return;
+
+                                const now = Date.now();
+                                const canExpand = !lastExpandTimes[targetId] || (now - lastExpandTimes[targetId] >= 8000);
+                                const dynamicScript = scriptGenerator(canExpand);
+
+                                const evalMsg = await send('Runtime.evaluate', { expression: dynamicScript }, sessionId);
+                                const result = evalMsg.result?.result?.value;
+
+                                if (result && result.startsWith('clicked:')) {
+                                    if (result.includes('expand') || result.includes('requires input')) {
+                                        lastExpandTimes[targetId] = Date.now();
+                                    }
+                                    log(`[CDP] ✓ Thread [${shortId}] -> ${result}`);
+                                }
+
+                                await send('Target.detachFromTarget', { sessionId }).catch(() => { });
+                            } catch (e) { /* silent */ }
+                        });
+
+                        await Promise.allSettled(evalPromises);
+                    }
+
                     clearTimeout(timeout);
                     ws.close();
-                    resolve(results);
+                    resolve(true);
+                } catch (e) {
+
+                    clearTimeout(timeout); ws.close(); resolve(false);
                 }
-            }
-        });
-        ws.on('error', () => { clearTimeout(timeout); reject(new Error('ws-error')); });
+            });
+        } catch (e) { resolve(false); }
     });
 }
-
-// Use CDP DOM protocol to pierce closed shadow DOMs and click the banner
-async function clickBannerViaDom(wsUrl) {
-    return new Promise((resolve, reject) => {
-        const ws = new WebSocket(wsUrl);
-        const timeout = setTimeout(() => { ws.close(); reject(new Error('timeout')); }, 3000);
-        let msgId = 1;
-
-        function send(method, params = {}) {
-            const id = msgId++;
-            ws.send(JSON.stringify({ id, method, params }));
-            return id;
-        }
-
-        const handlers = {};
-        ws.on('message', (raw) => {
-            const msg = JSON.parse(raw.toString());
-            if (msg.id && handlers[msg.id]) handlers[msg.id](msg);
-        });
-        ws.on('error', () => { clearTimeout(timeout); reject(new Error('ws-error')); });
-
-        ws.on('open', () => {
-            // Step 1: Get full DOM tree piercing shadow DOMs
-            const docId = send('DOM.getDocument', { depth: -1, pierce: true });
-            handlers[docId] = (msg) => {
-                if (!msg.result) { clearTimeout(timeout); ws.close(); resolve(null); return; }
-
-                // Step 2: Search for "Expand" text near the banner
-                const searchId = send('DOM.performSearch', { query: 'Expand' });
-                handlers[searchId] = (msg2) => {
-                    const count = msg2.result?.resultCount || 0;
-                    if (count === 0) { clearTimeout(timeout); ws.close(); resolve(null); return; }
-
-                    // Step 3: Get search result nodes
-                    const getResultsId = send('DOM.getSearchResults', {
-                        searchId: msg2.result.searchId,
-                        fromIndex: 0,
-                        toIndex: Math.min(count, 10)
-                    });
-                    handlers[getResultsId] = (msg3) => {
-                        const nodeIds = msg3.result?.nodeIds || [];
-                        if (nodeIds.length === 0) { clearTimeout(timeout); ws.close(); resolve(null); return; }
-
-                        // Step 4: Try each node — get its box model and click at center
-                        let tried = 0;
-                        function tryNode(idx) {
-                            if (idx >= nodeIds.length) {
-                                clearTimeout(timeout); ws.close(); resolve(null); return;
-                            }
-                            const boxId = send('DOM.getBoxModel', { nodeId: nodeIds[idx] });
-                            handlers[boxId] = (boxMsg) => {
-                                tried++;
-                                const quad = boxMsg.result?.model?.content;
-                                if (!quad || quad.length < 4) {
-                                    tryNode(idx + 1); return; // not visible, try next
-                                }
-                                // Calculate center of the element
-                                const x = (quad[0] + quad[2] + quad[4] + quad[6]) / 4;
-                                const y = (quad[1] + quad[3] + quad[5] + quad[7]) / 4;
-                                if (x === 0 && y === 0) { tryNode(idx + 1); return; }
-
-                                // Step 5: Real mouse click at center coordinates
-                                const downId = send('Input.dispatchMouseEvent', {
-                                    type: 'mousePressed', x, y, button: 'left', clickCount: 1
-                                });
-                                handlers[downId] = () => {
-                                    const upId = send('Input.dispatchMouseEvent', {
-                                        type: 'mouseReleased', x, y, button: 'left', clickCount: 1
-                                    });
-                                    handlers[upId] = () => {
-                                        clearTimeout(timeout);
-                                        ws.close();
-                                        resolve(`clicked:expand-mouse[${Math.round(x)},${Math.round(y)}]`);
-                                    };
-                                };
-                            };
-                        }
-                        tryNode(0);
-                    };
-                };
-            };
-        });
-    });
-}
-
-// Wider port scan: 9000-9014 + common Chromium/Node defaults
-const CDP_PORTS = [9222, 9229, ...Array.from({ length: 15 }, (_, i) => 9000 + i)];
 
 async function checkPermissionButtons() {
-    // Async lock: prevent 1500ms intervals from overlapping if Chrome is slow
     if (!isEnabled || isCdpBusy) return;
     isCdpBusy = true;
 
     const config = vscode.workspace.getConfiguration('autoAcceptV2');
     const customTexts = config.get('customButtonTexts', []);
-    const script = buildPermissionScript(customTexts);
+
+    const scriptGenerator = (canExpand) => {
+        return `var CAN_EXPAND = ${canExpand};\n` + buildPermissionScript(customTexts);
+    };
 
     try {
-        for (const port of CDP_PORTS) {
-            try {
-                const pages = await cdpGetPages(port);
-                if (pages.length === 0) continue;
+        const portsToScan = activeCdpPort ? [activeCdpPort, ...CDP_PORTS.filter(p => p !== activeCdpPort)] : CDP_PORTS;
 
-                // Filter for webviews only — skip service workers & main window
-                const webviews = pages.filter(p => p.url && p.url.includes('vscode-webview://'));
-                log(`[CDP] Port ${port}: ${pages.length} targets, ${webviews.length} webviews`);
-                if (webviews.length === 0) continue;
+        for (const port of portsToScan) {
+            const connected = await multiplexCdpWebviews(port, scriptGenerator);
 
-                // Concurrent broadcast: fire script at ALL webviews simultaneously
-                const clickPromises = webviews.map(async (page) => {
-                    try {
-                        const result = await cdpEvaluate(page.webSocketDebuggerUrl, script);
-                        const shortId = (page.id || '').substring(0, 6) || 'unknown';
-
-                        if (result && result.startsWith('clicked:')) {
-                            const targetId = page.id || page.webSocketDebuggerUrl;
-
-                            // Per-target expand cooldown (prevents toggle loop per chat)
-                            if (result.includes('expand') || result.includes('requires input')) {
-                                const now = Date.now();
-                                if (lastExpandTimes[targetId] && (now - lastExpandTimes[targetId] < 8000)) {
-                                    return; // This specific chat is cooling down
-                                }
-                                lastExpandTimes[targetId] = now;
-                            }
-
-                            log(`[CDP] ✓ Thread [${shortId}] -> ${result}`);
-                        }
-                    } catch (e) {
-                        // Silently swallow per-target errors
-                    }
-                });
-
-                // Wait for all targets to finish evaluating
-                await Promise.allSettled(clickPromises);
-
-                // Successfully processed this CDP port
+            if (connected) {
+                activeCdpPort = port;
                 isCdpBusy = false;
                 return;
-            } catch (e) { /* try next port */ }
+            } else if (port === activeCdpPort) {
+                activeCdpPort = null;
+            }
         }
     } catch (e) { /* silent */ }
     finally {
-        isCdpBusy = false; // Release lock
+        isCdpBusy = false;
     }
 }
 

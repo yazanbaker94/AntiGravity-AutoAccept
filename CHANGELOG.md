@@ -1,24 +1,21 @@
 # Changelog
 
-## [1.18.4] — 2026-02-22
+## [1.18.4] — 2026-02-23
+
+### Browser-Level CDP Session Multiplexer
+- **Fixed** critical compatibility issue with Electron 30+ / Chromium 120+. The legacy `/json/list` HTTP endpoint no longer exposes webview targets — all CDP evaluations were silently failing with `ReferenceError: document is not defined`.
+- **Replaced** the entire CDP layer with a browser-level session multiplexer: connects via `/json/version`, enables `Target.setDiscoverTargets`, attaches to page targets with `Target.attachToTarget({ flatten: true })`, and evaluates scripts through session-tunneled `Runtime.evaluate`.
+- **DOM access detection**: Automatically identifies which page targets have real DOM access (vs headless utility processes) before injecting the clicker script.
 
 ### Concurrent CDP Optimizations
-- **Fixed Cooldown Illusion**: Injected logic directly into the webview script to prevent the DOM from violently clicking the "Expand" banner every 1.5s while the Node.js orchestrator ignored the result on cooldown.
-- **Port Scanner Caching**: Caches the active CDP port (`activeCdpPort`) to eliminate 17 unnecessary failing HTTP requests every polling cycle when an agent panel isn't open.
-- **Removed Dead Code**: Deleted 120+ lines of deprecated coordinate-clicking code (`cdpSendMulti`, `clickBannerViaDom`) to save memory and reduce extension size.
-
-## [1.18.4] — 2026-02-22
+- **Cooldown Illusion Fix**: Injected `CAN_EXPAND` variable directly into webview script to prevent DOM from clicking Expand while on cooldown.
+- **Port Scanner Caching**: Caches active CDP port to eliminate unnecessary failing HTTP requests.
+- **Dead Code Removal**: Deleted 120+ lines of deprecated `cdpSendMulti` and `clickBannerViaDom`.
 
 ### CDP Script Fix
-- **Fixed** critical `SyntaxError: Unexpected string` that silently broke all CDP script evaluations. Root cause: a code comment containing `\necho "test"\n` inside a template literal — the `\n` was interpreted as actual newlines, breaking the script at line 49.
-- **Added** `[CDP-DBG]` diagnostic logging: captures exception type, subtype, error description, and line number on evaluation failures.
-- **Added** per-cycle target count logging (`Port 9222: N targets`) for better polling visibility.
-
-### Concurrent Broadcast (Multi-Chat Support)
-- **Parallel CDP evaluation**: Replaced sequential `for` loop with `Promise.allSettled()` — all webview targets are evaluated simultaneously.
-- **Webview filtering**: Only `vscode-webview://` targets are evaluated; service workers and main window are skipped.
-- **Per-target cooldowns**: Expand cooldown is now tracked per chat thread (`lastExpandTimes[targetId]`), so one chat's cooldown doesn't lock another.
-- **Multi-chat hack**: Use `File → Duplicate Workspace` to run two agent chats in separate windows — bot auto-clicks both simultaneously.
+- **Fixed** `SyntaxError: Unexpected string` in CDP template literal.
+- **Per-target cooldowns**: Expand cooldown tracked per chat thread (`lastExpandTimes[targetId]`).
+- **Concurrent broadcast**: `Promise.allSettled()` for simultaneous webview evaluation.
 
 ---
 

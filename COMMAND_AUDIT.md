@@ -3,7 +3,7 @@
 Full audit of all 2,834 registered VS Code commands. Filtered for `accept`, `allow`, `approve`, `confirm`, `grant`, `permit`, `trust` keywords.
 
 > [!IMPORTANT]
-> DeepThink confirmed: **No hidden commands exist for tool/MCP approval.** Google intentionally isolates these in the webview UI. Our CDP scraper is the only viable approach — and it's inherently future-proof because all future tools will fire the same `ask_tool_permission` webview payload.
+> **No hidden commands exist for tool/MCP approval.** Google intentionally isolates these in the webview UI. Our CDP scraper is the only viable approach — and it's inherently future-proof because all future tools will fire the same `ask_tool_permission` webview payload.
 
 ---
 
@@ -85,7 +85,7 @@ const ACCEPT_COMMANDS = [
 
 ---
 
-## 🧠 DeepThink Answers (Verified)
+## Verified Research Notes
 
 ### Tool/MCP Approval
 No hidden commands exist. Google intentionally isolates approvals in the webview UI to prevent malicious extensions from silently granting agents filesystem/server access. Approvals use dynamic per-session RPC IDs that can't be replayed via command palette.
