@@ -19,12 +19,65 @@ When the Antigravity agent proposes file edits, terminal commands, or asks for t
 
 ### 1. Enable Debug Mode (Required)
 
-The extension needs Chrome DevTools Protocol to click buttons. On first launch, if the debug port is not open, the extension will show an error with **"Auto-Fix Shortcut (Windows)"** — click it to automatically patch your shortcut.
-
-**Manual method:** Right-click your Antigravity shortcut → Properties → add to Target:
+The extension needs Chrome DevTools Protocol to click permission buttons. Launch Antigravity with:
 ```
 --remote-debugging-port=9222
 ```
+
+<details>
+<summary><b>🪟 Windows</b></summary>
+
+**Automatic:** On first launch, the extension detects if the port is closed and shows **"Auto-Fix Shortcut"** — click it to automatically patch your `.lnk` shortcut.
+
+**Manual:** Right-click your Antigravity shortcut → Properties → append to Target:
+```
+--remote-debugging-port=9222
+```
+
+</details>
+
+<details>
+<summary><b>🍎 macOS</b></summary>
+
+**Option 1 — Automator App (recommended):**
+1. Open **Automator** → New Document → **Application**
+2. Search for **"Run Shell Script"** in the library
+3. Paste: `open -a "Antigravity" --args --remote-debugging-port=9222`
+4. Save as "AntiGravity Launcher" to Desktop or Applications
+
+**Option 2 — Terminal alias** (add to `~/.zshrc`):
+```bash
+alias antigravity='open -a "Antigravity" --args --remote-debugging-port=9222'
+```
+
+> **Note:** The app name must match exactly. Check with `ls /Applications/ | grep -i anti`
+
+</details>
+
+<details>
+<summary><b>🐧 Linux</b></summary>
+
+**Option 1 — Edit the `.desktop` file:**
+```bash
+# Find it:
+find /usr/share/applications ~/.local/share/applications -name "*ntigravity*" 2>/dev/null
+
+# Edit the Exec line:
+Exec=/path/to/antigravity --remote-debugging-port=9222 %F
+```
+
+**Option 2 — Shell alias** (add to `~/.bashrc` or `~/.zshrc`):
+```bash
+alias antigravity='antigravity --remote-debugging-port=9222'
+```
+
+**Option 3 — Wrapper script:**
+```bash
+#!/bin/bash
+/opt/Antigravity/antigravity --remote-debugging-port=9222 "$@"
+```
+
+</details>
 
 ### 2. Install the Extension
 
