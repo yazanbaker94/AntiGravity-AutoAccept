@@ -170,8 +170,16 @@ function updateStatusBar() {
 // Uses the browser-level WebSocket (/json/version) to attach to page
 // targets and execute scripts inside windows with actual DOM access.
 
-// Wider port scan: 9000-9014 + common Chromium/Node defaults
-const CDP_PORTS = [9222, 9229, ...Array.from({ length: 15 }, (_, i) => 9000 + i)];
+// Smart Port: read configured port, fall back to legacy 9222 + standard ranges
+function getConfiguredPort() {
+    return vscode.workspace.getConfiguration('autoAcceptV2').get('cdpPort', 9333);
+}
+
+function getPrioritizedPorts() {
+    const targetPort = getConfiguredPort();
+    const basePorts = [targetPort, 9222, 9229, ...Array.from({ length: 15 }, (_, i) => 9000 + i)];
+    return [...new Set(basePorts)]; // Remove duplicates
+}
 
 // Get the browser-level WebSocket URL
 function cdpGetBrowserWsUrl(port) {
@@ -324,7 +332,7 @@ async function checkPermissionButtons() {
     };
 
     try {
-        const portsToScan = activeCdpPort ? [activeCdpPort, ...CDP_PORTS.filter(p => p !== activeCdpPort)] : CDP_PORTS;
+        const portsToScan = activeCdpPort ? [activeCdpPort, ...getPrioritizedPorts().filter(p => p !== activeCdpPort)] : getPrioritizedPorts();
 
         for (const port of portsToScan) {
             const connected = await multiplexCdpWebviews(port, scriptGenerator);
@@ -386,20 +394,20 @@ const cp = require('child_process');
 
 function checkAndFixCDP() {
     return new Promise((resolve) => {
-        const req = http.get({ hostname: '127.0.0.1', port: 9222, path: '/json/list', timeout: 2000 }, (res) => {
+        const targetPort = getConfiguredPort();
+        const req = http.get({ hostname: '127.0.0.1', port: targetPort, path: '/json/version', timeout: 2000 }, (res) => {
             let data = '';
             res.on('data', chunk => data += chunk);
             res.on('end', () => {
-                log('[CDP] Debug port active ✓');
+                log(`[CDP] Debug port ${targetPort} active \u2713`);
                 resolve(true);
             });
         });
         req.on('error', (err) => {
             if (err.code === 'ECONNREFUSED') {
-                log('[CDP] ⚠ Port 9222 refused — remote debugging not enabled');
-                // Fire the notification (non-blocking) — handle clicks via .then()
+                log(`[CDP] \u26a0 Port ${targetPort} refused \u2014 remote debugging not enabled`);
                 vscode.window.showErrorMessage(
-                    '⚡ AutoAccept needs Debug Mode to click buttons. Port 9222 is not open.',
+                    `\u26a1 AutoAccept needs Debug Mode on port ${targetPort}. Launch with --remote-debugging-port=${targetPort}`,
                     'Auto-Fix Shortcut (Windows)',
                     'Manual Guide'
                 ).then(action => {
@@ -425,11 +433,13 @@ function applyPermanentWindowsPatch() {
     const os = require('os');
     const fs = require('fs');
     const path = require('path');
+    const targetPort = getConfiguredPort();
 
-    // Write a .ps1 file to avoid inline escaping issues with --remote-debugging-port
+    // Write a .ps1 file — uses regex to migrate old ports or add new flag
     const psFile = path.join(os.tmpdir(), 'antigravity_patch_shortcut.ps1');
     const psContent = `
-$flag = "--remote-debugging-port=9222"
+$targetPort = "${targetPort}"
+$flag = "--remote-debugging-port=$targetPort"
 $WshShell = New-Object -comObject WScript.Shell
 $paths = @(
     "$env:USERPROFILE\\Desktop",
@@ -444,8 +454,17 @@ foreach ($dir in $paths) {
         foreach ($file in $files) {
             $shortcut = $WshShell.CreateShortcut($file.FullName)
             if ($shortcut.TargetPath -like "*Antigravity*") {
-                if ($shortcut.Arguments -notlike "*remote-debugging-port*") {
-                    $shortcut.Arguments = ($shortcut.Arguments + " " + $flag).Trim()
+                $args = $shortcut.Arguments
+                if ($args -match "--remote-debugging-port=\\d+") {
+                    if ($args -notmatch "--remote-debugging-port=$targetPort") {
+                        $shortcut.Arguments = $args -replace "--remote-debugging-port=\\d+", $flag
+                        $shortcut.Save()
+                        $patched = $true
+                        Write-Output "MIGRATED: $($file.FullName)"
+                    }
+                }
+                elseif ($args -notmatch "--remote-debugging-port=") {
+                    $shortcut.Arguments = ("$args " + $flag).Trim()
                     $shortcut.Save()
                     $patched = $true
                     Write-Output "PATCHED: $($file.FullName)"
@@ -467,7 +486,6 @@ if ($patched) { Write-Output "SUCCESS" } else { Write-Output "NOT_FOUND" }
 
     log('[CDP] Running shortcut patcher...');
     cp.exec(`powershell -NoProfile -ExecutionPolicy Bypass -File "${psFile}"`, (err, stdout, stderr) => {
-        // Clean up temp file
         try { fs.unlinkSync(psFile); } catch (e) { }
 
         if (err) {
@@ -478,9 +496,9 @@ if ($patched) { Write-Output "SUCCESS" } else { Write-Output "NOT_FOUND" }
         }
         log(`[CDP] Patcher output: ${stdout.trim()}`);
         if (stdout.includes('SUCCESS')) {
-            log('[CDP] ✓ Shortcut patched!');
+            log('[CDP] \u2713 Shortcut patched!');
             vscode.window.showInformationMessage(
-                '✅ Shortcut updated! Restart Antigravity for the fix to take effect.',
+                `\u2705 Shortcut updated with port ${targetPort}! Restart Antigravity for the fix to take effect.`,
                 'Restart Now'
             ).then(action => {
                 if (action === 'Restart Now') applyTemporarySessionRestart();
@@ -488,7 +506,7 @@ if ($patched) { Write-Output "SUCCESS" } else { Write-Output "NOT_FOUND" }
         } else {
             log('[CDP] No matching shortcuts found');
             vscode.window.showWarningMessage(
-                'No Antigravity shortcut found on Desktop or Start Menu. Add --remote-debugging-port=9222 to your shortcut manually.'
+                `No Antigravity shortcut found. Add --remote-debugging-port=${targetPort} to your shortcut manually.`
             );
         }
     });

@@ -21,7 +21,7 @@ When the Antigravity agent proposes file edits, terminal commands, or asks for t
 
 The extension needs Chrome DevTools Protocol to click permission buttons. Launch Antigravity with:
 ```
---remote-debugging-port=9222
+--remote-debugging-port=9333
 ```
 
 <details>
@@ -31,7 +31,7 @@ The extension needs Chrome DevTools Protocol to click permission buttons. Launch
 
 **Manual:** Right-click your Antigravity shortcut → Properties → append to Target:
 ```
---remote-debugging-port=9222
+--remote-debugging-port=9333
 ```
 
 </details>
@@ -42,12 +42,12 @@ The extension needs Chrome DevTools Protocol to click permission buttons. Launch
 **Option 1 — Automator App (recommended):**
 1. Open **Automator** → New Document → **Application**
 2. Search for **"Run Shell Script"** in the library
-3. Paste: `open -a "Antigravity" --args --remote-debugging-port=9222`
+3. Paste: `open -a "Antigravity" --args --remote-debugging-port=9333`
 4. Save as "AntiGravity Launcher" to Desktop or Applications
 
 **Option 2 — Terminal alias** (add to `~/.zshrc`):
 ```bash
-alias antigravity='open -a "Antigravity" --args --remote-debugging-port=9222'
+alias antigravity='open -a "Antigravity" --args --remote-debugging-port=9333'
 ```
 
 > **Note:** The app name must match exactly. Check with `ls /Applications/ | grep -i anti`
@@ -63,18 +63,18 @@ alias antigravity='open -a "Antigravity" --args --remote-debugging-port=9222'
 find /usr/share/applications ~/.local/share/applications -name "*ntigravity*" 2>/dev/null
 
 # Edit the Exec line:
-Exec=/path/to/antigravity --remote-debugging-port=9222 %F
+Exec=/path/to/antigravity --remote-debugging-port=9333 %F
 ```
 
 **Option 2 — Shell alias** (add to `~/.bashrc` or `~/.zshrc`):
 ```bash
-alias antigravity='antigravity --remote-debugging-port=9222'
+alias antigravity='antigravity --remote-debugging-port=9333'
 ```
 
 **Option 3 — Wrapper script:**
 ```bash
 #!/bin/bash
-/opt/Antigravity/antigravity --remote-debugging-port=9222 "$@"
+/opt/Antigravity/antigravity --remote-debugging-port=9333 "$@"
 ```
 
 </details>
@@ -118,6 +118,7 @@ To run multiple agents simultaneously and have the bot auto-click commands for a
 |---|---|---|
 | `autoAcceptV2.pollInterval` | `500` | Polling interval in ms |
 | `autoAcceptV2.customButtonTexts` | `[]` | Extra button texts for i18n or custom prompts |
+| `autoAcceptV2.cdpPort` | `9333` | CDP port (default avoids conflict with AG Browser Control on 9222) |
 
 ## How it Works
 
@@ -144,21 +145,21 @@ On activation, the extension checks if port 9222 is open. If not, it shows a not
 
 ### Bot stops working after a few hours
 
-**Cause:** Antigravity silently restarts its Electron process (auto-updates, memory pressure, or extension host crash). The new process doesn't have `--remote-debugging-port=9222`.
+**Cause:** Antigravity silently restarts its Electron process (auto-updates, memory pressure, or extension host crash). The new process doesn't have `--remote-debugging-port=9333`.
 
 **Fix:** Close **all** Antigravity windows completely, then reopen from your patched shortcut. A simple Reload Window (`Ctrl+Shift+P` → Reload) won't fix this — you need a full restart.
 
 ### Bot is ON but not clicking anything
 
 1. **Toggle OFF → ON** — click the status bar icon twice to restart polling
-2. **Check the debug port** — visit `http://127.0.0.1:9222/json/list` in a browser. If it refuses, the debug port is dead (see above)
+2. **Check the debug port** — visit `http://127.0.0.1:9333/json/list` in a browser. If it refuses, the debug port is dead (see above)
 3. **Check Output logs** — `Ctrl+Shift+U` → dropdown → `AntiGravity AutoAccept`. Look for `[CDP] ✓ Thread` lines. If there are none, CDP can't find the agent panel
 
 ### Log shows repeated `clicked:run` but nothing happens
 
 **Cause:** The script is matching a static text element instead of the real Run button. Short terms like `run` require an exact text match to limit false positives. If you still see spam, the 5-second per-element cooldown (`data-aa-t`) should suppress it after the first click.
 
-**Fix:** Update to the latest version — this was fixed in v1.18.4.
+**Fix:** Update to the latest version — this was fixed in v2.0.0.
 
 ### Status bar icon not showing after install
 
@@ -179,7 +180,7 @@ Commands deliberately **excluded** to prevent harm:
 
 **Why does this need `--remote-debugging-port`?**
 
-Antigravity's agent panel runs in an isolated Chromium process. The VS Code Extension API cannot see or interact with the Run/Accept/Allow buttons inside it — they're React UI elements with no registered commands. Chrome DevTools Protocol (CDP) on port 9222 is the only way to reach them.
+Antigravity's agent panel runs in an isolated Chromium process. The VS Code Extension API cannot see or interact with the Run/Accept/Allow buttons inside it — they're React UI elements with no registered commands. Chrome DevTools Protocol (CDP) on a localhost port (default 9333) is the only way to reach them.
 
 **Is it safe?**
 
