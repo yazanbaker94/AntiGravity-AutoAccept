@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.1.0] — 2026-02-25 — Fix: "Allow Now" button not clicking (issue #3)
+
+### Bug Fixes
+- **Fixed** Channel 1 (VS Code Commands) being gated behind a successful CDP connection. The extension now restores saved state and starts the commands poller unconditionally on activate — CDP check is purely optional for Channel 2. Users without `--remote-debugging-port` set now get full Command-API coverage immediately.
+- **Fixed** "Allow Now" permission dialog button not being matched. Added `'allow now'` as an explicit, first-class button text (tried before the generic `'allow'`).
+- **Fixed** Webview guard blocking the "Allow Now" dialog in non-agent-panel webviews. CDP-attached webview targets now bypass the guard entirely — they are already isolated by target selection and don't need a DOM marker check.
+- **Fixed** `startsWith` prefix threshold (5 → 3 chars) so `"Run Alt+d"` correctly matches the `'run'` search term. The 3× length cap still prevents false positives.
+- **Fixed** Test suite: `El` mock class was missing `setAttribute`, causing 31 of 44 tests to fail. All 49 tests now pass (0 failures).
+
+---
+
 ## [1.18.4] — 2026-02-23
 
 ### Browser-Level CDP Session Multiplexer

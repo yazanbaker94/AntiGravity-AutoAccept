@@ -1,4 +1,4 @@
-// AntiGravity AutoAccept v2.0.0
+// AntiGravity AutoAccept v2.1.0
 // Primary: VS Code Commands API with async lock
 // Secondary: Browser-level CDP session multiplexer for permission & action buttons
 
@@ -21,24 +21,27 @@ const ACCEPT_COMMANDS = [
 // Uses a Webview Guard to prevent execution on the main VS Code window.
 // The agent panel runs in an isolated Chromium process (OOPIF) since
 // VS Code's migration to Out-Of-Process Iframes.
-function buildPermissionScript(customTexts) {
+function buildPermissionScript(customTexts, isWebviewTarget = false) {
     const allTexts = [
         'run', 'accept',  // Primary action buttons first ("Run Alt+d", "Accept")
-        'always allow', 'allow this conversation', 'allow',
+        'always allow', 'allow this conversation', 'allow now', 'allow',
         ...customTexts
     ];
     return `
 (function() {
     var BUTTON_TEXTS = ${JSON.stringify(allTexts)};
+    var IS_WEBVIEW_TARGET = ${isWebviewTarget};
     
     // ═══ WEBVIEW GUARD ═══
-    // Check for Antigravity agent panel DOM markers.
-    // The panel has .react-app-container; the main VS Code window doesn't.
-    // This prevents false positives (sidebars, markdown, menus).
-    if (!document.querySelector('.react-app-container') && 
-        !document.querySelector('[class*="agent"]') &&
-        !document.querySelector('[data-vscode-context]')) {
-        return 'not-agent-panel';
+    // For confirmed webview targets (already isolated by CDP target selection)
+    // skip the guard — we know we're inside a webview, not the main VS Code window.
+    // For page targets, keep the guard to avoid running in VS Code's main window DOM.
+    if (!IS_WEBVIEW_TARGET) {
+        if (!document.querySelector('.react-app-container') && 
+            !document.querySelector('[class*="agent"]') &&
+            !document.querySelector('[data-vscode-context]')) {
+            return 'not-agent-panel';
+        }
     }
     
     // We are safely inside the isolated agent panel webview.
@@ -79,10 +82,10 @@ function buildPermissionScript(customTexts) {
             if (nodeText.length > 50) continue;
             // Matching rules:
             // - Exact match always works
-            // - startsWith only for terms >= 5 chars (avoids 'run' matching random text)
+            // - startsWith for terms >= 3 chars (3× length cap blocks long containers)
             // - For startsWith, the matched text can't be more than 3x the search term length
             var isMatch = nodeText === text || 
-                (text.length >= 5 && nodeText.startsWith(text) && nodeText.length <= text.length * 3);
+                (text.length >= 3 && nodeText.startsWith(text) && nodeText.length <= text.length * 3);
             if (isMatch) {
                 var clickable = closestClickable(node);
                 var tag2 = (clickable.tagName || '').toLowerCase();
@@ -288,7 +291,10 @@ function multiplexCdpWebviews(port, scriptGenerator) {
 
                             const now = Date.now();
                             const canExpand = !lastExpandTimes[targetId] || (now - lastExpandTimes[targetId] >= 8000);
-                            const dynamicScript = scriptGenerator(canExpand);
+                            // Webview targets are already isolated by CDP — skip the webview guard.
+                            // Page targets still need the guard to avoid running in VS Code's main window.
+                            const isWebviewTarget = (kind === 'Webview');
+                            const dynamicScript = scriptGenerator(canExpand, isWebviewTarget);
 
                             const evalMsg = await send('Runtime.evaluate', { expression: dynamicScript }, sessionId);
                             const result = evalMsg.result?.result?.value;
@@ -327,8 +333,8 @@ async function checkPermissionButtons() {
     const config = vscode.workspace.getConfiguration('autoAcceptV2');
     const customTexts = config.get('customButtonTexts', []);
 
-    const scriptGenerator = (canExpand) => {
-        return `var CAN_EXPAND = ${canExpand};\n` + buildPermissionScript(customTexts);
+    const scriptGenerator = (canExpand, isWebviewTarget = false) => {
+        return `var CAN_EXPAND = ${canExpand};\n` + buildPermissionScript(customTexts, isWebviewTarget);
     };
 
     try {
@@ -526,7 +532,7 @@ function applyTemporarySessionRestart() {
 // ─── Activation ───────────────────────────────────────────────────────
 function activate(context) {
     outputChannel = vscode.window.createOutputChannel('AntiGravity AutoAccept');
-    log('Extension activating (v2.0.0)');
+    log('Extension activating (v2.1.0)');
 
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     statusBarItem.command = 'autoAcceptV2.toggle';
@@ -546,19 +552,22 @@ function activate(context) {
         })
     );
 
-    // Check CDP on activation — prompt auto-fix if port 9222 is closed
+    // Always restore saved ON/OFF state and start polling.
+    // Channel 1 (VS Code Commands) works without CDP — don't gate it behind CDP check.
+    if (context.globalState.get('autoAcceptV2Enabled', false)) {
+        isEnabled = true;
+        startPolling();
+    }
+    updateStatusBar();
+    log('Extension activated');
+
+    // Check CDP separately — only affects Channel 2 (webview button clicking via CDP).
     checkAndFixCDP().then(cdpOk => {
         if (cdpOk) {
-            // Restore saved state
-            if (context.globalState.get('autoAcceptV2Enabled', false)) {
-                isEnabled = true;
-                startPolling();
-            }
+            log('[CDP] Debug port active ✓ — Channel 2 (webview clicking) enabled');
         } else {
-            log('CDP not available — bot will not start until debug port is enabled');
+            log('[CDP] Channel 2 unavailable — only VS Code commands will fire (see README for setup)');
         }
-        updateStatusBar();
-        log('Extension activated');
     });
 }
 

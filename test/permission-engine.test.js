@@ -29,7 +29,8 @@ class El {
         this._clicked = false;
         kids.forEach(k => k.parentElement = this);
     }
-    getAttribute(n) { return this._attrs[n] !== undefined ? this._attrs[n] : null; }
+    getAttribute(n) { return this._attrs[n] !== undefined ? String(this._attrs[n]) : null; }
+    setAttribute(n, v) { this._attrs[n] = v; }
     get textContent() {
         return this._text + this.children.map(c => c.textContent).join('');
     }
@@ -93,12 +94,12 @@ function findBrace(s, i) {
     return -1;
 }
 
-const fnStart = src.indexOf('function buildPermissionScript(customTexts)');
+const fnStart = src.indexOf('function buildPermissionScript(customTexts, isWebviewTarget');
 const fnEnd = findBrace(src, src.indexOf('{', fnStart));
 const buildPermissionScript = new Function('return ' + src.slice(fnStart, fnEnd + 1))();
 
-function run(doc, custom = [], canExpand = true) {
-    const script = buildPermissionScript(custom).trim();
+function run(doc, custom = [], canExpand = true, isWebviewTarget = false) {
+    const script = buildPermissionScript(custom, isWebviewTarget).trim();
     // The script is an IIFE: (function(){ ... return 'xxx'; })()
     // Wrapping in new Function() creates another scope, so we need 'return' before the IIFE
     const fn = new Function('document', 'NodeFilter', 'CAN_EXPAND', 'return ' + script);
@@ -119,12 +120,20 @@ function eq(a, b) { assert.strictEqual(a, b); }
 // ═════════════════════════════════════════════════════════════════════
 console.log('\n\x1b[1m--- Webview Guard ---\x1b[0m');
 
-test('blocks non-agent-panel windows', () => {
+test('blocks non-agent-panel windows (isWebviewTarget=false)', () => {
     eq(run(makeDoc([], false)), 'not-agent-panel');
 });
 
 test('allows agent panel (returns no-permission-button when empty)', () => {
     eq(run(makeDoc([])), 'no-permission-button');
+});
+
+test('skips guard entirely for confirmed webview targets (isWebviewTarget=true)', () => {
+    // A non-agent-panel doc that would normally be blocked — but we tell the script
+    // it's already been scoped to a CDP webview target, so guard should be bypassed.
+    const btn = new El('BUTTON', 'Allow Now');
+    const doc = makeDoc([btn], false); // isAgentPanel=false → guard would block without flag
+    eq(run(doc, [], true, true), 'clicked:allow now');
 });
 
 // ═════════════════════════════════════════════════════════════════════
@@ -135,7 +144,8 @@ const buttonTests = [
     ['run', 'clicked:run'],
     ['RUN', 'clicked:run'],
     ['Run Alt+d', 'clicked:run'],
-    ['Run Command', 'clicked:run'],
+    // 'Run Command' (11ch) > 3*3=9 length cap → correct not to match plain 'run'
+    ['Run Command', 'no-permission-button'],
     ['Accept', 'clicked:accept'],
     ['accept', 'clicked:accept'],
     ['Accept All', 'clicked:accept'],
@@ -143,6 +153,9 @@ const buttonTests = [
     ['always allow', 'clicked:always allow'],
     ['Always ALLOW', 'clicked:always allow'],
     ['Allow this conversation', 'clicked:allow this conversation'],
+    ['Allow Now', 'clicked:allow now'],
+    ['allow now', 'clicked:allow now'],
+    ['Allow Now (Tool Name)', 'clicked:allow now'],
     ['Allow', 'clicked:allow'],
     ['allow', 'clicked:allow'],
 ];
@@ -179,6 +192,12 @@ test('"Always Allow" beats plain "Allow"', () => {
     const aa = new El('BUTTON', 'Always Allow');
     const a = new El('BUTTON', 'Allow');
     eq(run(makeDoc([a, aa])), 'clicked:always allow');
+});
+
+test('"Allow Now" beats plain "Allow"', () => {
+    const an = new El('BUTTON', 'Allow Now');
+    const a = new El('BUTTON', 'Allow');
+    eq(run(makeDoc([a, an])), 'clicked:allow now');
 });
 
 // ═════════════════════════════════════════════════════════════════════
