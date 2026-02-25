@@ -2,7 +2,7 @@
     "name": "antigravity-autoaccept",
     "displayName": "AntiGravity AutoAccept",
     "description": "Auto-accept Run, Accept, and Always Allow buttons in Antigravity via CDP with Webview Guard isolation.",
-    "version": "1.18.4",
+    "version": "2.0.0",
     "publisher": "YazanBaker",
     "icon": "images/icon.png",
     "engines": {
