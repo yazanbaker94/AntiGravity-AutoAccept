@@ -1,6 +1,6 @@
 # Changelog
 
-## [2.1.0] — 2026-02-25 — Fix: "Allow Now" button not clicking (issue #3)
+## [2.0.1] — 2026-02-25 — Fix: "Allow Now" button not clicking (issue #4)
 
 ### Bug Fixes
 - **Fixed** Channel 1 (VS Code Commands) being gated behind a successful CDP connection. The extension now restores saved state and starts the commands poller unconditionally on activate — CDP check is purely optional for Channel 2. Users without `--remote-debugging-port` set now get full Command-API coverage immediately.

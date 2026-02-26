@@ -1,4 +1,4 @@
-// AntiGravity AutoAccept v2.1.0
+// AntiGravity AutoAccept v2.0.1
 // Primary: VS Code Commands API with async lock
 // Secondary: Browser-level CDP session multiplexer for permission & action buttons
 
@@ -532,7 +532,7 @@ function applyTemporarySessionRestart() {
 // ─── Activation ───────────────────────────────────────────────────────
 function activate(context) {
     outputChannel = vscode.window.createOutputChannel('AntiGravity AutoAccept');
-    log('Extension activating (v2.1.0)');
+    log('Extension activating (v2.0.1)');
 
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     statusBarItem.command = 'autoAcceptV2.toggle';
