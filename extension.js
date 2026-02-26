@@ -1,4 +1,4 @@
-// AntiGravity AutoAccept v2.0.0
+// AntiGravity AutoAccept v2.1.0
 // Primary: VS Code Commands API with async lock
 // Secondary: Browser-level CDP session multiplexer for permission & action buttons
 
@@ -170,8 +170,21 @@ function updateStatusBar() {
 // Uses the browser-level WebSocket (/json/version) to attach to page
 // targets and execute scripts inside windows with actual DOM access.
 
-// Wider port scan: 9000-9014 + common Chromium/Node defaults
-const CDP_PORTS = [9222, 9229, ...Array.from({ length: 15 }, (_, i) => 9000 + i)];
+// Graceful Dual-Port: configured port (default 9333), legacy 9222 fallback
+function getConfiguredPort() {
+    return vscode.workspace.getConfiguration('autoAcceptV2').get('cdpPort', 9333);
+}
+
+function pingPort(port) {
+    return new Promise((resolve) => {
+        const req = http.get({ hostname: '127.0.0.1', port, path: '/json/version', timeout: 800 }, (res) => {
+            res.on('data', () => { }); // Consume data to free memory
+            res.on('end', () => resolve(true));
+        });
+        req.on('error', () => resolve(false));
+        req.on('timeout', () => { req.destroy(); resolve(false); });
+    });
+}
 
 // Get the browser-level WebSocket URL
 function cdpGetBrowserWsUrl(port) {
@@ -324,7 +337,7 @@ async function checkPermissionButtons() {
     };
 
     try {
-        const portsToScan = activeCdpPort ? [activeCdpPort, ...CDP_PORTS.filter(p => p !== activeCdpPort)] : CDP_PORTS;
+        const portsToScan = activeCdpPort ? [activeCdpPort] : [getConfiguredPort(), 9222];
 
         for (const port of portsToScan) {
             const connected = await multiplexCdpWebviews(port, scriptGenerator);
@@ -384,39 +397,37 @@ function stopPolling() {
 // ─── CDP Auto-Fix: Detect & Repair ───────────────────────────────────
 const cp = require('child_process');
 
-function checkAndFixCDP() {
-    return new Promise((resolve) => {
-        const req = http.get({ hostname: '127.0.0.1', port: 9222, path: '/json/list', timeout: 2000 }, (res) => {
-            let data = '';
-            res.on('data', chunk => data += chunk);
-            res.on('end', () => {
-                log('[CDP] Debug port active ✓');
-                resolve(true);
-            });
-        });
-        req.on('error', (err) => {
-            if (err.code === 'ECONNREFUSED') {
-                log('[CDP] ⚠ Port 9222 refused — remote debugging not enabled');
-                // Fire the notification (non-blocking) — handle clicks via .then()
-                vscode.window.showErrorMessage(
-                    '⚡ AutoAccept needs Debug Mode to click buttons. Port 9222 is not open.',
-                    'Auto-Fix Shortcut (Windows)',
-                    'Manual Guide'
-                ).then(action => {
-                    if (action === 'Auto-Fix Shortcut (Windows)') {
-                        applyPermanentWindowsPatch();
-                    } else if (action === 'Manual Guide') {
-                        vscode.env.openExternal(vscode.Uri.parse('https://github.com/yazanbaker94/AntiGravity-AutoAccept#setup'));
-                    }
-                });
-            }
-            resolve(false);
-        });
-        req.on('timeout', () => { req.destroy(); resolve(false); });
+async function checkAndFixCDP() {
+    const configPort = getConfiguredPort();
+
+    // 1. Try the configured port first (default 9333)
+    if (await pingPort(configPort)) {
+        log(`[CDP] Debug port ${configPort} active ✓`);
+        activeCdpPort = configPort;
+        return true;
+    }
+
+    // 2. Graceful Fallback: try legacy port 9222
+    if (configPort !== 9222 && await pingPort(9222)) {
+        log(`[CDP] ⚠ Configured port ${configPort} offline. Legacy port 9222 is active. Using 9222.`);
+        activeCdpPort = 9222;
+        return true;
+    }
+
+    // 3. Both failed — prompt user
+    log(`[CDP] ⚠ All ports refused — remote debugging not enabled`);
+    vscode.window.showErrorMessage(
+        `⚡ AutoAccept needs Debug Mode (Port ${configPort}). Please apply the fix or update your shortcut.`,
+        'Auto-Fix Shortcut (Windows)',
+        'Manual Guide'
+    ).then(action => {
+        if (action === 'Auto-Fix Shortcut (Windows)') applyPermanentWindowsPatch(configPort);
+        else if (action === 'Manual Guide') vscode.env.openExternal(vscode.Uri.parse('https://github.com/yazanbaker94/AntiGravity-AutoAccept#setup'));
     });
+    return false;
 }
 
-function applyPermanentWindowsPatch() {
+function applyPermanentWindowsPatch(targetPort) {
     if (process.platform !== 'win32') {
         vscode.window.showInformationMessage('Auto-patching is Windows-only. Use the Manual Guide.');
         return;
@@ -426,35 +437,37 @@ function applyPermanentWindowsPatch() {
     const fs = require('fs');
     const path = require('path');
 
-    // Write a .ps1 file to avoid inline escaping issues with --remote-debugging-port
-    const psFile = path.join(os.tmpdir(), 'antigravity_patch_shortcut.ps1');
+    // Safe patcher: NO regex replacement. Only appends to clean shortcuts.
+    const psFile = path.join(os.tmpdir(), 'ag_patch_port.ps1');
     const psContent = `
-$flag = "--remote-debugging-port=9222"
+$flag = "--remote-debugging-port=${targetPort}"
 $WshShell = New-Object -comObject WScript.Shell
-$paths = @(
-    "$env:USERPROFILE\\Desktop",
-    "$env:PUBLIC\\Desktop",
-    "$env:APPDATA\\Microsoft\\Windows\\Start Menu\\Programs",
-    "$env:ALLUSERSPROFILE\\Microsoft\\Windows\\Start Menu\\Programs"
-)
+$paths = @("$env:USERPROFILE\\Desktop", "$env:PUBLIC\\Desktop", "$env:APPDATA\\Microsoft\\Windows\\Start Menu\\Programs", "$env:ALLUSERSPROFILE\\Microsoft\\Windows\\Start Menu\\Programs")
 $patched = $false
+$manualFixNeeded = $false
+
 foreach ($dir in $paths) {
     if (Test-Path $dir) {
         $files = Get-ChildItem -Path $dir -Filter "*.lnk" -Recurse -ErrorAction SilentlyContinue
         foreach ($file in $files) {
             $shortcut = $WshShell.CreateShortcut($file.FullName)
             if ($shortcut.TargetPath -like "*Antigravity*") {
-                if ($shortcut.Arguments -notlike "*remote-debugging-port*") {
-                    $shortcut.Arguments = ($shortcut.Arguments + " " + $flag).Trim()
+                if ($shortcut.Arguments -match "--remote-debugging-port=") {
+                    if ($shortcut.Arguments -notmatch $flag) {
+                        $manualFixNeeded = $true
+                    }
+                } else {
+                    $shortcut.Arguments = ("$($shortcut.Arguments) " + $flag).Trim()
                     $shortcut.Save()
                     $patched = $true
-                    Write-Output "PATCHED: $($file.FullName)"
                 }
             }
         }
     }
 }
-if ($patched) { Write-Output "SUCCESS" } else { Write-Output "NOT_FOUND" }
+if ($manualFixNeeded) { Write-Output "MANUAL_NEEDED" }
+elseif ($patched) { Write-Output "SUCCESS" }
+else { Write-Output "NOT_FOUND" }
 `;
 
     try {
@@ -465,33 +478,37 @@ if ($patched) { Write-Output "SUCCESS" } else { Write-Output "NOT_FOUND" }
         return;
     }
 
-    log('[CDP] Running shortcut patcher...');
-    cp.exec(`powershell -NoProfile -ExecutionPolicy Bypass -File "${psFile}"`, (err, stdout, stderr) => {
-        // Clean up temp file
-        try { fs.unlinkSync(psFile); } catch (e) { }
+    log(`[CDP] Running invisible shortcut patcher for port ${targetPort}...`);
+    cp.exec(`powershell -WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File "${psFile}"`,
+        { windowsHide: true },
+        (err, stdout) => {
+            try { fs.unlinkSync(psFile); } catch (e) { }
 
-        if (err) {
-            log(`[CDP] Patcher error: ${err.message}`);
-            log(`[CDP] stderr: ${stderr}`);
-            vscode.window.showWarningMessage('Shortcut patching failed. Please add the flag manually.');
-            return;
-        }
-        log(`[CDP] Patcher output: ${stdout.trim()}`);
-        if (stdout.includes('SUCCESS')) {
-            log('[CDP] ✓ Shortcut patched!');
-            vscode.window.showInformationMessage(
-                '✅ Shortcut updated! Restart Antigravity for the fix to take effect.',
-                'Restart Now'
-            ).then(action => {
-                if (action === 'Restart Now') applyTemporarySessionRestart();
-            });
-        } else {
-            log('[CDP] No matching shortcuts found');
-            vscode.window.showWarningMessage(
-                'No Antigravity shortcut found on Desktop or Start Menu. Add --remote-debugging-port=9222 to your shortcut manually.'
-            );
-        }
-    });
+            if (err) {
+                log(`[CDP] Patcher error: ${err.message}`);
+                vscode.window.showWarningMessage('Shortcut patching failed. Please add the flag manually.');
+                return;
+            }
+            log(`[CDP] Patcher output: ${stdout.trim()}`);
+            if (stdout.includes('MANUAL_NEEDED')) {
+                vscode.window.showWarningMessage(
+                    `Your shortcut already has a debugging port. Please manually change it to ${targetPort} in the shortcut properties.`
+                );
+            } else if (stdout.includes('SUCCESS')) {
+                log('[CDP] ✓ Shortcut patched!');
+                vscode.window.showInformationMessage(
+                    `✅ Shortcut updated to port ${targetPort}! Restart Antigravity for the fix to take effect.`,
+                    'Restart Now'
+                ).then(action => {
+                    if (action === 'Restart Now') vscode.commands.executeCommand('workbench.action.quit');
+                });
+            } else {
+                log('[CDP] No matching shortcuts found');
+                vscode.window.showWarningMessage(
+                    `No Antigravity shortcut found. Add --remote-debugging-port=${targetPort} to your shortcut manually.`
+                );
+            }
+        });
 }
 
 function applyTemporarySessionRestart() {
@@ -508,7 +525,7 @@ function applyTemporarySessionRestart() {
 // ─── Activation ───────────────────────────────────────────────────────
 function activate(context) {
     outputChannel = vscode.window.createOutputChannel('AntiGravity AutoAccept');
-    log('Extension activating (v2.0.0)');
+    log('Extension activating (v2.1.0)');
 
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     statusBarItem.command = 'autoAcceptV2.toggle';

@@ -24,6 +24,8 @@ The extension needs Chrome DevTools Protocol to click permission buttons. Launch
 --remote-debugging-port=9333
 ```
 
+> **Why port 9333?** Antigravity's built-in Browser Control (Chrome button in the toolbar) uses port 9222 by default. Using the same port causes an `EADDRINUSE` conflict on macOS/Linux. Port 9333 avoids this entirely. *(Thanks to [u/unlike_a_boss](https://www.reddit.com/user/unlike_a_boss/) for discovering this!)*
+
 <details>
 <summary><b>🪟 Windows</b></summary>
 
@@ -90,7 +92,7 @@ alias antigravity='antigravity --remote-debugging-port=9333'
 **Manual:**
 1. Copy `extension.js` and `package.json` to:
    ```
-   ~/.antigravity/extensions/YazanBaker.antigravity-autoaccept-2.0.0/
+   ~/.antigravity/extensions/YazanBaker.antigravity-autoaccept-2.1.0/
    ```
 2. Run `npm install` in that directory (installs `ws` dependency)
 3. Reload Window
@@ -137,7 +139,7 @@ Inside the agent panel, a `TreeWalker` searches for buttons by text content usin
 | 5 | `continue`, `proceed` | Continuation prompts |
 
 ### CDP Auto-Fix
-On activation, the extension checks if port 9222 is open. If not, it shows a notification with:
+On activation, the extension checks if port 9333 is open (with 9222 fallback). If not, it shows a notification with:
 - **Auto-Fix Shortcut (Windows)** — patches your `.lnk` shortcut via PowerShell
 - **Manual Guide** — links to this README
 

@@ -2,7 +2,7 @@
     "name": "antigravity-autoaccept",
     "displayName": "AntiGravity AutoAccept",
     "description": "Auto-accept Run, Accept, and Always Allow buttons in Antigravity via CDP with Webview Guard isolation.",
-    "version": "2.0.0",
+    "version": "2.1.0",
     "publisher": "YazanBaker",
     "icon": "images/icon.png",
     "engines": {
@@ -37,6 +37,11 @@
                         "type": "string"
                     },
                     "description": "Extra button texts to auto-click (for i18n or custom UI). E.g. ['toujours autoriser', 'siempre permitir']"
+                },
+                "autoAcceptV2.cdpPort": {
+                    "type": "number",
+                    "default": 9333,
+                    "description": "The localhost port for Chrome DevTools Protocol. (Default 9333 avoids conflicts with AG Browser Control)."
                 }
             }
         }
