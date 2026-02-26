@@ -54,6 +54,12 @@ alias antigravity='open -a "Antigravity" --args --remote-debugging-port=9333'
 
 > **Note:** The app name must match exactly. Check with `ls /Applications/ | grep -i anti`
 
+**Option 3 — Direct Electron binary** (if `open -a` doesn't pass args correctly):
+```bash
+alias antigravity='/Applications/Antigravity.app/Contents/MacOS/Electron --remote-debugging-port=9333 & disown'
+```
+*(Thanks to [@aangelinsf](https://github.com/aangelinsf))*
+
 </details>
 
 <details>
