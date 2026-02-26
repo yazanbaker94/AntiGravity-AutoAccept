@@ -37,11 +37,6 @@
                         "type": "string"
                     },
                     "description": "Extra button texts to auto-click (for i18n or custom UI). E.g. ['toujours autoriser', 'siempre permitir']"
-                },
-                "autoAcceptV2.cdpPort": {
-                    "type": "number",
-                    "default": 9333,
-                    "description": "The localhost port for Chrome DevTools Protocol. Default 9333 avoids conflicts with AG Browser Control (which uses 9222)."
                 }
             }
         }
