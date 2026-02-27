@@ -428,12 +428,6 @@ async function checkAndFixCDP() {
     return false;
 }
 
-// ───────────────────────────────────────────────────────────────────
-// 🟢 FIXED: applyPermanentWindowsPatch
-// We removed the file writing and converted the code to a Base64
-// string to bypass execution policies, and changed the filter to 
-// explicitly match "*Antigravity*.lnk" so it works perfectly.
-// ───────────────────────────────────────────────────────────────────
 function applyPermanentWindowsPatch(targetPort) {
     if (process.platform !== 'win32') {
         vscode.window.showInformationMessage('Auto-patching is Windows-only. Use the Manual Guide.');
@@ -472,7 +466,6 @@ else { Write-Output "NOT_FOUND" }
 
     log(`[CDP] Running Base64 shortcut patcher for port ${targetPort}...`);
     
-    // FIX: Execute entirely in memory to bypass Windows Defender & Execution Policies
     const base64Script = Buffer.from(psContent, 'utf16le').toString('base64');
     const command = `powershell -WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${base64Script}`;
 
