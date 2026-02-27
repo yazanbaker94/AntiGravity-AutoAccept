@@ -441,6 +441,7 @@ $WshShell = New-Object -comObject WScript.Shell
 $paths = @("$env:USERPROFILE\\Desktop", "$env:PUBLIC\\Desktop", "$env:APPDATA\\Microsoft\\Windows\\Start Menu\\Programs", "$env:ALLUSERSPROFILE\\Microsoft\\Windows\\Start Menu\\Programs")
 $patched = $false
 $manualFixNeeded = $false
+$patchedLnk = $null
 
 foreach ($dir in $paths) {
     if (Test-Path $dir) {
@@ -452,11 +453,14 @@ foreach ($dir in $paths) {
                     if ($shortcut.Arguments -match "--remote-debugging-port=") {
                         if ($shortcut.Arguments -notmatch $flag) {
                             $manualFixNeeded = $true
+                        } else {
+                            if (-not $patchedLnk) { $patchedLnk = $file.FullName }
                         }
                     } else {
                         $shortcut.Arguments = ("$($shortcut.Arguments) " + $flag).Trim()
                         $shortcut.Save()
                         $patched = $true
+                        if (-not $patchedLnk) { $patchedLnk = $file.FullName }
                     }
                 }
             } catch {
@@ -466,7 +470,7 @@ foreach ($dir in $paths) {
     }
 }
 if ($manualFixNeeded) { Write-Output "MANUAL_NEEDED" }
-elseif ($patched) { Write-Output "SUCCESS" }
+elseif ($patched -or $patchedLnk) { Write-Output "SUCCESS|$patchedLnk" }
 else { Write-Output "NOT_FOUND" }
 `;
 
@@ -483,18 +487,41 @@ else { Write-Output "NOT_FOUND" }
                 vscode.window.showWarningMessage('Shortcut patching failed. Please add the flag manually.');
                 return;
             }
-            log(`[CDP] Patcher output: ${stdout.trim()}`);
-            if (stdout.includes('MANUAL_NEEDED')) {
+            const out = stdout.trim();
+            log(`[CDP] Patcher output: ${out}`);
+            if (out.includes('MANUAL_NEEDED')) {
                 vscode.window.showWarningMessage(
                     `Your shortcut already has a debugging port. Please manually change it to ${targetPort} in the shortcut properties.`
                 );
-            } else if (stdout.includes('SUCCESS')) {
-                log('[CDP] ✓ Shortcut patched!');
+            } else if (out.includes('SUCCESS|')) {
+                const lnkPath = out.split('SUCCESS|')[1].trim();
+                log(`[CDP] ✓ Shortcut ready: ${lnkPath}`);
                 vscode.window.showInformationMessage(
-                    `✅ Shortcut updated to port ${targetPort}! Restart Antigravity for the fix to take effect.`,
+                    `✅ Shortcut ready! Restart Antigravity to activate AutoAccept.`,
                     'Restart Now'
                 ).then(action => {
-                    if (action === 'Restart Now') vscode.commands.executeCommand('workbench.action.quit');
+                    if (action === 'Restart Now' && lnkPath) {
+                        const safePath = lnkPath.replace(/'/g, "''");
+
+                        // Sleeper payload: waits 2s for single-instance lock, then launches shortcut
+                        const sleeperScript = `Start-Sleep -Seconds 2; Start-Process -FilePath '${safePath}'`;
+                        const b64Sleeper = Buffer.from(sleeperScript, 'utf16le').toString('base64');
+
+                        // WMI Escape Hatch: spawns sleeper under WmiPrvSE.exe, outside IDE's Job Object
+                        const wmiScript = `$si=([wmiclass]"Win32_ProcessStartup").CreateInstance();$si.ShowWindow=0;$cmd="powershell.exe -WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${b64Sleeper}";([wmiclass]"Win32_Process").Create($cmd,$null,$si)`;
+                        const b64Wmi = Buffer.from(wmiScript, 'utf16le').toString('base64');
+
+                        log('[CDP] Triggering WMI escape hatch for restart...');
+                        cp.exec(`powershell -WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${b64Wmi}`,
+                            { windowsHide: true },
+                            (err) => {
+                                if (err) log(`[CDP] WMI trigger warning: ${err.message}`);
+                                vscode.commands.executeCommand('workbench.action.quit');
+                            }
+                        );
+                    } else if (action === 'Restart Now') {
+                        vscode.commands.executeCommand('workbench.action.quit');
+                    }
                 });
             } else {
                 log('[CDP] No matching shortcuts found');
@@ -505,16 +532,7 @@ else { Write-Output "NOT_FOUND" }
         });
 }
 
-function applyTemporarySessionRestart() {
-    vscode.window.showInformationMessage(
-        '✅ Closing Antigravity — reopen from your Desktop/Start Menu shortcut to activate Debug Mode.',
-        'Close Now'
-    ).then(action => {
-        if (action === 'Close Now') {
-            vscode.commands.executeCommand('workbench.action.quit');
-        }
-    });
-}
+// applyTemporarySessionRestart removed — restart is now handled inline via Detached Time-Bomb
 
 // ─── Activation ───────────────────────────────────────────────────────
 function activate(context) {
