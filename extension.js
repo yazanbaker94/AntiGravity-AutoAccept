@@ -81,9 +81,11 @@ function buildPermissionScript(customTexts) {
             // Matching rules:
             // - Exact match always works
             // - startsWith only for terms >= 5 chars (avoids 'run' matching random text)
-            // - For startsWith, the matched text can't be more than 3x the search term length
+            // - Word-boundary prefix: 'run ' matches 'run alt+d' but not 'runner'
+            // - For prefix matches, the matched text can't be more than 3x the search term length
             var isMatch = nodeText === text || 
-                (text.length >= 5 && nodeText.startsWith(text) && nodeText.length <= text.length * 3);
+                (text.length >= 5 && nodeText.startsWith(text) && nodeText.length <= text.length * 3) ||
+                (nodeText.startsWith(text + ' ') && nodeText.length <= text.length * 5);
             if (isMatch) {
                 var clickable = closestClickable(node);
                 var tag2 = (clickable.tagName || '').toLowerCase();
@@ -205,15 +207,22 @@ function cdpGetBrowserWsUrl(port) {
     });
 }
 
-function multiplexCdpWebviews(port, scriptGenerator) {
-    return new Promise(async (resolve) => {
-        try {
-            // 1. Get browser-level WebSocket
-            const browserWsUrl = await cdpGetBrowserWsUrl(port);
-            if (!browserWsUrl) return resolve(false);
+async function multiplexCdpWebviews(port, scriptGenerator) {
+    try {
+        // 1. Get browser-level WebSocket
+        const browserWsUrl = await cdpGetBrowserWsUrl(port);
+        if (!browserWsUrl) return false;
 
+        return await new Promise((resolve) => {
             const ws = new WebSocket(browserWsUrl);
-            const timeout = setTimeout(() => { ws.close(); resolve(false); }, 5000);
+            const timeout = setTimeout(() => {
+                // Safely abort if CONNECTING (0) or OPEN (1).
+                // Ignores CLOSING (2) and CLOSED (3) to prevent double-close exceptions.
+                if (ws.readyState !== WebSocket.CLOSED && ws.readyState !== WebSocket.CLOSING) {
+                    ws.close();
+                }
+                resolve(false);
+            }, 5000);
 
             let msgId = 1;
             const pending = {};
@@ -318,12 +327,11 @@ function multiplexCdpWebviews(port, scriptGenerator) {
                     ws.close();
                     resolve(true);
                 } catch (e) {
-
                     clearTimeout(timeout); ws.close(); resolve(false);
                 }
             });
-        } catch (e) { resolve(false); }
-    });
+        });
+    } catch (e) { return false; }
 }
 
 async function checkPermissionButtons() {
@@ -345,7 +353,6 @@ async function checkPermissionButtons() {
 
             if (connected) {
                 activeCdpPort = port;
-                isCdpBusy = false;
                 return;
             } else if (port === activeCdpPort) {
                 activeCdpPort = null;

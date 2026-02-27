@@ -12,7 +12,7 @@ The extension operates on **two parallel channels**, each designed to handle a d
 
 ```mermaid
 graph TD
-    A[Extension Activates] --> B{CDP Port 9222 Open?}
+    A[Extension Activates] --> B{CDP Port 9333 Open?}
     B -->|Yes| C[Restore Saved State]
     B -->|No| D[Show Auto-Fix Prompt]
     C --> E[User Toggles ON]
@@ -68,11 +68,11 @@ Antigravity's permission dialogs (tool approval, MCP access) are rendered inside
 
 ### Step 1: Find the Debug Port (Lines 172–191)
 
-```javascript
-const CDP_PORTS = [9222, 9229, ...Array.from({ length: 15 }, (_, i) => 9000 + i)];
-```
+The extension uses a strict **2-port fallback** strategy:
+1. **Configured port** (default `9333`) — checked first
+2. **Legacy port `9222`** — fallback only if the configured port is unavailable
 
-The extension scans **17 ports** looking for a Chromium debug endpoint. Once found, the port is cached in `activeCdpPort` so future cycles skip the scan. It fetches the **browser-level WebSocket URL** from `/json/version` — this is the master connection that can see all targets.
+Once a working port is found, it's cached in `activeCdpPort` so future cycles skip the scan. The extension fetches the **browser-level WebSocket URL** from `/json/version` — this is the master connection that can see all targets.
 
 ### Step 2: Connect & Discover Targets (Lines 193–245)
 

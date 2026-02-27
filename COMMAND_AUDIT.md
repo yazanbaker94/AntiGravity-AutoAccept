@@ -7,7 +7,7 @@ Full audit of all 2,834 registered VS Code commands. Filtered for `accept`, `all
 
 ---
 
-## ✅ Commands We Poll (8 total)
+## ✅ Commands We Poll (4 total)
 
 | Command | Purpose |
 |---|---|
@@ -15,10 +15,8 @@ Full audit of all 2,834 registered VS Code commands. Filtered for `accept`, `all
 | `antigravity.terminalCommand.accept` | Accepts "Run this command?" prompts |
 | `antigravity.terminalCommand.run` | Executes terminal commands |
 | `antigravity.command.accept` | Accepts inline editor commands |
-| `chatEditing.acceptAllFiles` | Batch accepts all pending file changes |
-| `chatEditing.acceptFile` | Accepts individual file change |
-| `inlineChat.acceptChanges` | Accepts inline chat suggestions (Ctrl+I) |
-| `interactive.acceptChanges` | Accepts interactive session changes |
+
+> **Removed (v2.2.0):** `chatEditing.acceptAllFiles`, `chatEditing.acceptFile`, `inlineChat.acceptChanges`, and `interactive.acceptChanges` were removed because they cause sidebar interference (Outline toggling, folder collapsing) when the agent panel lacks focus. Only Antigravity-namespaced commands are safe.
 
 ---
 

@@ -141,8 +141,9 @@ Inside the agent panel, a `TreeWalker` searches for buttons by text content usin
 | 1 | `run` | "Run Alt+d" button ✅ (not "Always run ^" dropdown) |
 | 2 | `accept` | Accept button |
 | 3 | `always allow` | Permission prompts |
-| 4 | `allow` | Permission prompts |
-| 5 | `continue`, `proceed` | Continuation prompts |
+| 4 | `allow this conversation` | Conversation-scoped permissions |
+| 5 | `allow` | Permission prompts |
+| 6 | `retry` | Retry prompts |
 
 ### CDP Auto-Fix
 On activation, the extension checks if port 9333 is open (with 9222 fallback). If not, it shows a notification with:

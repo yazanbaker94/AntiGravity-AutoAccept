@@ -30,6 +30,7 @@ class El {
         kids.forEach(k => k.parentElement = this);
     }
     getAttribute(n) { return this._attrs[n] !== undefined ? this._attrs[n] : null; }
+    setAttribute(n, v) { this._attrs[n] = String(v); }
     get textContent() {
         return this._text + this.children.map(c => c.textContent).join('');
     }
