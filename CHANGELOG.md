@@ -1,5 +1,29 @@
 # Changelog
 
+## [3.0.0] — 2026-02-28
+
+### Architecture: Event-Driven CDP (Zero-Polling)
+- **Replaced** attach→evaluate→detach polling cycle with **persistent CDP sessions** (`Map<targetId, sessionId>`)
+- **Replaced** periodic script injection with one-shot **MutationObserver** payload — reacts instantly when buttons appear in DOM
+- **Connection Manager**: browser-level WebSocket stays open, uses `Target.targetCreated`/`Target.targetDestroyed` events for lifecycle
+- **Self-healing**: automatic reconnection on WebSocket close, re-injection on execution context clear (webview navigation)
+- **Heartbeat**: periodic health check + new target discovery every 30s
+
+### Modularization
+- **Split** monolithic 589-line `extension.js` into three modules:
+  - `src/extension.js` — VS Code lifecycle, command polling, auto-fix patcher
+  - `src/cdp/ConnectionManager.js` — persistent WebSocket, session pool, target management
+  - `src/scripts/DOMObserver.js` — MutationObserver payload generator
+
+### Localized Cooldowns
+- **Moved** all cooldown state into the injected DOM script via `data-aa-t` attributes
+- **Eliminated** Node.js global `lastExpandTimes` map — cooldowns are fully per-element
+
+### Continue Button Support (from v2.3.0)
+- **Added** automatic clicking of the "Continue" button (agent invocation limit)
+
+---
+
 ## [2.3.0] — 2026-02-28
 
 ### Continue Button Support

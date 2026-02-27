@@ -1,7 +1,7 @@
 /**
  * Permission Engine Test Suite
  * ─────────────────────────────
- * Exercises the button-matching logic from buildPermissionScript().
+ * Exercises the button-matching logic from DOMObserver.
  * Uses jsdom-free mock DOM that closely mirrors browser APIs.
  *
  * Run:  node test/permission-engine.test.js
@@ -79,31 +79,26 @@ function makeDoc(bodyKids, isAgentPanel = true) {
 }
 
 // ─── Script Runner ───────────────────────────────────────────────────
-// Extract buildPermissionScript from extension.js and run it in our mock.
+// Import DOMObserver and run the generated script in our mock.
 
-const fs = require('fs');
 const path = require('path');
-const src = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
+const { buildDOMObserverScript } = require(path.join(__dirname, '..', 'src', 'scripts', 'DOMObserver'));
 
-function findBrace(s, i) {
-    let d = 0;
-    for (; i < s.length; i++) {
-        if (s[i] === '{') d++;
-        if (s[i] === '}') { d--; if (d === 0) return i; }
+function run(doc, custom = []) {
+    const script = buildDOMObserverScript(custom).trim();
+    // The script is an IIFE: (function(){ ... })()
+    // We need to add 'return' before it for new Function()
+    const fn = new Function('document', 'NodeFilter', 'window', 'requestAnimationFrame', 'MutationObserver', 'return ' + script);
+
+    // Mock window, requestAnimationFrame, and MutationObserver
+    const mockWindow = {};
+    const mockRAF = (cb) => cb();
+    class MockMutationObserver {
+        observe() { }
+        disconnect() { }
     }
-    return -1;
-}
 
-const fnStart = src.indexOf('function buildPermissionScript(customTexts)');
-const fnEnd = findBrace(src, src.indexOf('{', fnStart));
-const buildPermissionScript = new Function('return ' + src.slice(fnStart, fnEnd + 1))();
-
-function run(doc, custom = [], canExpand = true) {
-    const script = buildPermissionScript(custom).trim();
-    // The script is an IIFE: (function(){ ... return 'xxx'; })()
-    // Wrapping in new Function() creates another scope, so we need 'return' before the IIFE
-    const fn = new Function('document', 'NodeFilter', 'CAN_EXPAND', 'return ' + script);
-    return fn(doc, { SHOW_ELEMENT: 1 }, canExpand);
+    return fn(doc, { SHOW_ELEMENT: 1 }, mockWindow, mockRAF, MockMutationObserver);
 }
 
 // ─── Test Harness ────────────────────────────────────────────────────
@@ -124,8 +119,8 @@ test('blocks non-agent-panel windows', () => {
     eq(run(makeDoc([], false)), 'not-agent-panel');
 });
 
-test('allows agent panel (returns no-permission-button when empty)', () => {
-    eq(run(makeDoc([])), 'no-permission-button');
+test('allows agent panel (returns observer-installed when empty)', () => {
+    eq(run(makeDoc([])), 'observer-installed');
 });
 
 // ═════════════════════════════════════════════════════════════════════
@@ -146,12 +141,20 @@ const buttonTests = [
     ['Allow this conversation', 'clicked:allow this conversation'],
     ['Allow', 'clicked:allow'],
     ['allow', 'clicked:allow'],
+    ['Continue', 'clicked:continue'],
+    ['continue', 'clicked:continue'],
 ];
 
 for (const [btnText, expected] of buttonTests) {
     test(`"${btnText}" → ${expected}`, () => {
         const btn = new El('BUTTON', btnText);
-        eq(run(makeDoc([btn])), expected);
+        // The DOMObserver does scanAndClick() first, then installs observer.
+        // scanAndClick returns the click result. But the IIFE returns 'observer-installed' 
+        // after scanAndClick(). However, we can verify the button was clicked.
+        const result = run(makeDoc([btn]));
+        // The script returns 'observer-installed' because scanAndClick's return
+        // value is not propagated to the IIFE return. But the button WAS clicked.
+        assert.ok(btn._clicked, `Button "${btnText}" should have been clicked`);
     });
 }
 
@@ -161,25 +164,33 @@ console.log('\n\x1b[1m--- Priority Order ---\x1b[0m');
 test('"Run" beats "Always Allow" when both present', () => {
     const r = new El('BUTTON', 'Run');
     const a = new El('BUTTON', 'Always Allow');
-    eq(run(makeDoc([a, r])), 'clicked:run');
+    run(makeDoc([a, r]));
+    assert.ok(r._clicked, 'Run should be clicked');
+    assert.ok(!a._clicked, 'Always Allow should NOT be clicked');
 });
 
 test('"Accept" beats "Allow" when both present', () => {
     const a = new El('BUTTON', 'Accept');
     const b = new El('BUTTON', 'Allow');
-    eq(run(makeDoc([b, a])), 'clicked:accept');
+    run(makeDoc([b, a]));
+    assert.ok(a._clicked, 'Accept should be clicked');
+    assert.ok(!b._clicked, 'Allow should NOT be clicked');
 });
 
 test('"Run" beats "Accept" when both present', () => {
     const r = new El('BUTTON', 'Run');
     const a = new El('BUTTON', 'Accept');
-    eq(run(makeDoc([a, r])), 'clicked:run');
+    run(makeDoc([a, r]));
+    assert.ok(r._clicked, 'Run should be clicked');
+    assert.ok(!a._clicked, 'Accept should NOT be clicked');
 });
 
 test('"Always Allow" beats plain "Allow"', () => {
     const aa = new El('BUTTON', 'Always Allow');
     const a = new El('BUTTON', 'Allow');
-    eq(run(makeDoc([a, aa])), 'clicked:always allow');
+    run(makeDoc([a, aa]));
+    assert.ok(aa._clicked, 'Always Allow should be clicked');
+    assert.ok(!a._clicked, 'Allow should NOT be clicked');
 });
 
 // ═════════════════════════════════════════════════════════════════════
@@ -187,38 +198,45 @@ console.log('\n\x1b[1m--- Reject / Ignore Cases ---\x1b[0m');
 
 test('skips text > 50 chars (container, not button)', () => {
     const btn = new El('BUTTON', 'Run ' + 'x'.repeat(50));
-    eq(run(makeDoc([btn])), 'no-permission-button');
+    run(makeDoc([btn]));
+    assert.ok(!btn._clicked);
 });
 
 test('skips disabled button', () => {
     const btn = new El('BUTTON', 'Run', { disabled: true });
-    eq(run(makeDoc([btn])), 'no-permission-button');
+    run(makeDoc([btn]));
+    assert.ok(!btn._clicked);
 });
 
 test('skips aria-disabled button', () => {
     const btn = new El('BUTTON', 'Run', { 'aria-disabled': 'true' });
-    eq(run(makeDoc([btn])), 'no-permission-button');
+    run(makeDoc([btn]));
+    assert.ok(!btn._clicked);
 });
 
 test('skips button with .loading class', () => {
     const btn = new El('BUTTON', 'Run', { class: 'loading' });
-    eq(run(makeDoc([btn])), 'no-permission-button');
+    run(makeDoc([btn]));
+    assert.ok(!btn._clicked);
 });
 
 test('skips button containing .codicon-loading spinner', () => {
     const spinner = new El('SPAN', '', { class: 'codicon-loading' });
     const btn = new El('BUTTON', 'Run', {}, [spinner]);
-    eq(run(makeDoc([btn])), 'no-permission-button');
+    run(makeDoc([btn]));
+    assert.ok(!btn._clicked);
 });
 
 test('skips plain DIV with "Run" (not a button)', () => {
     const div = new El('DIV', 'Run');
-    eq(run(makeDoc([div])), 'no-permission-button');
+    run(makeDoc([div]));
+    assert.ok(!div._clicked);
 });
 
 test('does NOT match 2-char text via startsWith', () => {
     const btn = new El('BUTTON', 'ru');
-    eq(run(makeDoc([btn])), 'no-permission-button');
+    run(makeDoc([btn]));
+    assert.ok(!btn._clicked);
 });
 
 // ═════════════════════════════════════════════════════════════════════
@@ -227,25 +245,29 @@ console.log('\n\x1b[1m--- Clickable Ancestor Traversal ---\x1b[0m');
 test('span inside <button> → clicks button', () => {
     const span = new El('SPAN', 'Run');
     const btn = new El('BUTTON', '', {}, [span]);
-    eq(run(makeDoc([btn])), 'clicked:run');
+    run(makeDoc([btn]));
+    assert.ok(btn._clicked);
 });
 
 test('span inside role="button" div → clicks div', () => {
     const span = new El('SPAN', 'Accept');
     const div = new El('DIV', '', { role: 'button' }, [span]);
-    eq(run(makeDoc([div])), 'clicked:accept');
+    run(makeDoc([div]));
+    assert.ok(div._clicked);
 });
 
 test('span inside cursor-pointer div → clicks div', () => {
     const span = new El('SPAN', 'Allow');
     const div = new El('DIV', '', { class: 'cursor-pointer' }, [span]);
-    eq(run(makeDoc([div])), 'clicked:allow');
+    run(makeDoc([div]));
+    assert.ok(div._clicked);
 });
 
 test('span inside tabindex="0" div → clicks div', () => {
     const span = new El('SPAN', 'Run');
     const div = new El('DIV', '', { tabindex: '0' }, [span]);
-    eq(run(makeDoc([div])), 'clicked:run');
+    run(makeDoc([div]));
+    assert.ok(div._clicked);
 });
 
 // ═════════════════════════════════════════════════════════════════════
@@ -253,20 +275,20 @@ console.log('\n\x1b[1m--- data-testid / data-action Shortcut ---\x1b[0m');
 
 test('data-testid="alwaysallow" on <button> matches', () => {
     const btn = new El('BUTTON', 'Whatever', { 'data-testid': 'alwaysallow' });
-    const result = run(makeDoc([btn]));
-    // Should be clicked via the data-testid shortcut path
-    assert.ok(result.startsWith('clicked:'));
+    run(makeDoc([btn]));
+    assert.ok(btn._clicked);
 });
 
 test('data-action="always-allow" on <button> matches', () => {
     const btn = new El('BUTTON', 'Some Label', { 'data-action': 'always-allow' });
-    const result = run(makeDoc([btn]));
-    assert.ok(result.startsWith('clicked:'));
+    run(makeDoc([btn]));
+    assert.ok(btn._clicked);
 });
 
 test('data-testid on plain DIV is NOT clicked', () => {
     const div = new El('DIV', 'stuff', { 'data-testid': 'alwaysallow' });
-    eq(run(makeDoc([div])), 'no-permission-button');
+    run(makeDoc([div]));
+    assert.ok(!div._clicked);
 });
 
 // ═════════════════════════════════════════════════════════════════════
@@ -274,28 +296,28 @@ console.log('\n\x1b[1m--- Expand Banner (Pass 2) ---\x1b[0m');
 
 test('"Expand" clicked when no action buttons exist', () => {
     const btn = new El('BUTTON', 'Expand');
-    eq(run(makeDoc([btn])), 'clicked:expand');
+    run(makeDoc([btn]));
+    assert.ok(btn._clicked);
 });
 
 test('"Requires Input" banner clicked (startsWith match)', () => {
     const btn = new El('BUTTON', 'Requires Input');
-    eq(run(makeDoc([btn])), 'clicked:requires input');
+    run(makeDoc([btn]));
+    assert.ok(btn._clicked);
 });
 
 test('"1 Step Requires Input" does NOT match (prefix mismatch)', () => {
     const btn = new El('BUTTON', '1 Step Requires Input');
-    eq(run(makeDoc([btn])), 'no-permission-button');
-});
-
-test('expand skipped when CAN_EXPAND=false', () => {
-    const btn = new El('BUTTON', 'Expand');
-    eq(run(makeDoc([btn]), [], false), 'no-permission-button');
+    run(makeDoc([btn]));
+    assert.ok(!btn._clicked);
 });
 
 test('action buttons beat expand', () => {
     const run_btn = new El('BUTTON', 'Run');
     const exp = new El('BUTTON', 'Expand');
-    eq(run(makeDoc([exp, run_btn])), 'clicked:run');
+    run(makeDoc([exp, run_btn]));
+    assert.ok(run_btn._clicked);
+    assert.ok(!exp._clicked);
 });
 
 // ═════════════════════════════════════════════════════════════════════
@@ -303,33 +325,76 @@ console.log('\n\x1b[1m--- Custom Button Texts ---\x1b[0m');
 
 test('custom "toujours autoriser" matches', () => {
     const btn = new El('BUTTON', 'toujours autoriser');
-    eq(run(makeDoc([btn]), ['toujours autoriser']), 'clicked:toujours autoriser');
+    run(makeDoc([btn]), ['toujours autoriser']);
+    assert.ok(btn._clicked);
 });
 
 test('built-in "Run" still beats custom text', () => {
     const r = new El('BUTTON', 'Run');
     const c = new El('BUTTON', 'siempre permitir');
-    eq(run(makeDoc([c, r]), ['siempre permitir']), 'clicked:run');
+    run(makeDoc([c, r]), ['siempre permitir']);
+    assert.ok(r._clicked);
+    assert.ok(!c._clicked);
 });
 
 // ═════════════════════════════════════════════════════════════════════
 console.log('\n\x1b[1m--- Edge Cases ---\x1b[0m');
 
-test('empty DOM → no-permission-button', () => {
-    eq(run(makeDoc([])), 'no-permission-button');
+test('empty DOM → observer-installed (no buttons to click)', () => {
+    eq(run(makeDoc([])), 'observer-installed');
 });
 
 test('whitespace "  Run  " still matches', () => {
     const btn = new El('BUTTON', '  Run  ');
-    eq(run(makeDoc([btn])), 'clicked:run');
+    run(makeDoc([btn]));
+    assert.ok(btn._clicked);
 });
 
 test('icon + text child: <button><span>⚡</span><span>Run</span></button>', () => {
     const icon = new El('SPAN', '⚡');
     const text = new El('SPAN', 'Run');
     const btn = new El('BUTTON', '', {}, [icon, text]);
-    // The walker hits the SPAN "Run" → closestClickable walks up to BUTTON
-    eq(run(makeDoc([btn])), 'clicked:run');
+    run(makeDoc([btn]));
+    assert.ok(btn._clicked);
+});
+
+// ═════════════════════════════════════════════════════════════════════
+console.log('\n\x1b[1m--- Continue Button ---\x1b[0m');
+
+test('"Continue" is auto-clicked (invocation limit)', () => {
+    const btn = new El('BUTTON', 'Continue');
+    run(makeDoc([btn]));
+    assert.ok(btn._clicked);
+});
+
+test('"Continue generation" matches via startsWith', () => {
+    const btn = new El('BUTTON', 'Continue generation');
+    run(makeDoc([btn]));
+    assert.ok(btn._clicked);
+});
+
+// ═════════════════════════════════════════════════════════════════════
+console.log('\n\x1b[1m--- MutationObserver ---\x1b[0m');
+
+test('returns observer-installed on agent panel', () => {
+    eq(run(makeDoc([])), 'observer-installed');
+});
+
+test('idempotent: second injection returns already-active', () => {
+    const mockWindow = {};
+    const doc = makeDoc([]);
+    const script = buildDOMObserverScript([]).trim();
+    const fn = new Function('document', 'NodeFilter', 'window', 'requestAnimationFrame', 'MutationObserver', 'return ' + script);
+    const mockRAF = (cb) => cb();
+    class MockMO { observe() { } disconnect() { } }
+
+    // First injection
+    const r1 = fn(doc, { SHOW_ELEMENT: 1 }, mockWindow, mockRAF, MockMO);
+    eq(r1, 'observer-installed');
+
+    // Second injection on same window
+    const r2 = fn(doc, { SHOW_ELEMENT: 1 }, mockWindow, mockRAF, MockMO);
+    eq(r2, 'already-active');
 });
 
 // ═════════════════════════════════════════════════════════════════════
