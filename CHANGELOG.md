@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.3.0] — 2026-02-28
+
+### Continue Button Support
+- **Added** automatic clicking of the "Continue" button that appears when the agent reaches its invocation limit for a single response.
+- This enables fully unattended sessions — the agent now auto-resumes after hitting tool-call limits.
+
+---
+
 ## [1.18.4] — 2026-02-23
 
 ### Browser-Level CDP Session Multiplexer

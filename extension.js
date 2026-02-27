@@ -1,4 +1,4 @@
-// AntiGravity AutoAccept v2.2.0
+// AntiGravity AutoAccept v2.3.0
 // Primary: VS Code Commands API with async lock
 // Secondary: Browser-level CDP session multiplexer for permission & action buttons
 
@@ -25,7 +25,7 @@ function buildPermissionScript(customTexts) {
     const allTexts = [
         'run', 'accept',  // Primary action buttons first ("Run Alt+d", "Accept")
         'always allow', 'allow this conversation', 'allow',
-        'retry',
+        'retry', 'continue',
         ...customTexts
     ];
     return `
@@ -544,7 +544,7 @@ else { Write-Output "NOT_FOUND" }
 // ─── Activation ───────────────────────────────────────────────────────
 function activate(context) {
     outputChannel = vscode.window.createOutputChannel('AntiGravity AutoAccept');
-    log('Extension activating (v2.2.0)');
+    log('Extension activating (v2.3.0)');
 
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     statusBarItem.command = 'autoAcceptV2.toggle';
