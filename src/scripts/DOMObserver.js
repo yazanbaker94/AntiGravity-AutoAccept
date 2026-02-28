@@ -22,22 +22,49 @@ function buildDOMObserverScript(customTexts) {
     // ═══ IDEMPOTENCY GUARD ═══
     // Prevents double-injection if the script is evaluated again on the same context.
     if (window.__AA_OBSERVER_ACTIVE) return 'already-active';
-
-    // ═══ WEBVIEW GUARD ═══
-    // Only execute inside the Antigravity agent panel webview.
-    // The panel has .react-app-container; the main VS Code window doesn't.
-    if (!document.querySelector('.react-app-container') && 
-        !document.querySelector('[class*="agent"]') &&
-        !document.querySelector('[data-vscode-context]')) {
-        return 'not-agent-panel';
-    }
-
     window.__AA_OBSERVER_ACTIVE = true;
+
+    // ═══ WEBVIEW GUARD (deferred) ═══
+    // Moved inside scanAndClick() to avoid race condition:
+    // On Target.targetCreated / executionContextsCleared, the DOM may be
+    // unhydrated (empty). Checking synchronously here would falsely reject
+    // valid agent panels. Instead, we install the observer unconditionally
+    // and check the DOM structure dynamically on each scan.
+    function isAgentPanel() {
+        return !!(document.querySelector('.react-app-container') ||
+            document.querySelector('[class*="agent"]') ||
+            document.querySelector('[data-vscode-context]'));
+    }
 
     var BUTTON_TEXTS = ${JSON.stringify(allTexts)};
     var EXPAND_TEXTS = ${JSON.stringify(expandTexts)};
     var COOLDOWN_MS = 5000;
     var EXPAND_COOLDOWN_MS = 8000;
+    // Closure-scoped cooldown map — survives React DOM node recreation.
+    // Keyed by button identity string (tag + text hash), not DOM node reference.
+    var clickCooldowns = {};
+
+    // Lightweight DOM path: walks up to 3 ancestors to create a structurally unique key.
+    // Differentiates multiple "Accept" buttons in different DOM subtrees.
+    function _domPath(el) {
+        // Iterates 4 levels starting from el itself (not just ancestors).
+        // Includes sibling index (nth-child equivalent) at every level,
+        // ensuring unique paths even for direct sibling buttons.
+        var parts = [];
+        var curr = el;
+        for (var i = 0; i < 4 && curr && curr !== document.body; i++) {
+            var idx = 0;
+            var child = curr.parentElement ? curr.parentElement.firstElementChild : null;
+            while (child) {
+                if (child === curr) break;
+                idx++;
+                child = child.nextElementSibling;
+            }
+            parts.unshift((curr.tagName || '') + '[' + idx + ']');
+            curr = curr.parentElement;
+        }
+        return parts.join('/');
+    }
 
     function closestClickable(node) {
         var el = node;
@@ -85,9 +112,12 @@ function buildDOMObserverScript(customTexts) {
                         clickable.classList.contains('loading') || clickable.querySelector('.codicon-loading')) {
                         return null;
                     }
-                    // Per-element cooldown via DOM attribute (fully localized — no Node.js state)
-                    var lastClick = parseInt(clickable.getAttribute('data-aa-t') || '0', 10);
+                    // Closure-scoped cooldown — survives React node recreation.
+                    // Identity key: DOM path (3 ancestors) + trimmed text for structural uniqueness.
+                    // This prevents BUTTON:accept from one code block locking out another.
+                    var btnKey = _domPath(clickable) + ':' + (clickable.textContent || '').trim().toLowerCase().substring(0, 30);
                     var cooldown = (text === 'expand' || text === 'requires input') ? EXPAND_COOLDOWN_MS : COOLDOWN_MS;
+                    var lastClick = clickCooldowns[btnKey] || 0;
                     if (lastClick && (Date.now() - lastClick < cooldown)) {
                         return null;
                     }
@@ -98,12 +128,39 @@ function buildDOMObserverScript(customTexts) {
         return null;
     }
 
+    // ═══ COOLDOWN PRUNING ═══
+    // Prevents unbounded growth of clickCooldowns over long sessions.
+    // Called periodically during scanAndClick — lightweight O(n) sweep.
+    var lastPrune = Date.now();
+    var PRUNE_INTERVAL_MS = 30000; // Prune at most every 30s
+
+    function pruneCooldowns() {
+        var now = Date.now();
+        if (now - lastPrune < PRUNE_INTERVAL_MS) return;
+        lastPrune = now;
+        var maxAge = EXPAND_COOLDOWN_MS * 2; // 16s — well past any cooldown
+        var keys = Object.keys(clickCooldowns);
+        for (var i = 0; i < keys.length; i++) {
+            if (now - clickCooldowns[keys[i]] > maxAge) {
+                delete clickCooldowns[keys[i]];
+            }
+        }
+    }
+
     function scanAndClick() {
+        pruneCooldowns();
+
+        // ═══ DEFERRED WEBVIEW GUARD ═══
+        // Dynamically checks DOM structure on each scan instead of at injection time.
+        // This avoids the race condition where the DOM is unhydrated on targetCreated.
+        if (!isAgentPanel()) return null;
+
         // Pass 1: Action buttons (Run, Accept, Allow, Continue, Retry, etc.)
         for (var t = 0; t < BUTTON_TEXTS.length; t++) {
             var btn = findButton(document.body, BUTTON_TEXTS[t]);
             if (btn) {
-                btn.setAttribute('data-aa-t', '' + Date.now());
+                var key = _domPath(btn) + ':' + (btn.textContent || '').trim().toLowerCase().substring(0, 30);
+                clickCooldowns[key] = Date.now();
                 btn.click();
                 return 'clicked:' + BUTTON_TEXTS[t];
             }
@@ -112,7 +169,8 @@ function buildDOMObserverScript(customTexts) {
         for (var e = 0; e < EXPAND_TEXTS.length; e++) {
             var expBtn = findButton(document.body, EXPAND_TEXTS[e]);
             if (expBtn) {
-                expBtn.setAttribute('data-aa-t', '' + Date.now());
+                var key = _domPath(expBtn) + ':' + (expBtn.textContent || '').trim().toLowerCase().substring(0, 30);
+                clickCooldowns[key] = Date.now();
                 expBtn.click();
                 return 'clicked:' + EXPAND_TEXTS[e];
             }
@@ -125,15 +183,19 @@ function buildDOMObserverScript(customTexts) {
     scanAndClick();
 
     // ═══ MUTATION OBSERVER ═══
-    // Zero-polling, event-driven: reacts instantly when React mounts new elements.
-    var rafPending = false;
+    // Zero-polling, event-driven: reacts when React mounts new elements.
+    // Leading-edge throttle (200ms): fires scanAndClick() on the FIRST mutation,
+    // then at most once per 200ms during continuous activity. This is optimal
+    // because Antigravity buttons appear at the START of mutation bursts
+    // (React mounts button → then streams LLM text). A trailing debounce
+    // would delay clicks until streaming stops, which is the wrong behavior.
+    var debounceTimer = null;
     var observer = new MutationObserver(function() {
-        if (rafPending) return;
-        rafPending = true;
-        requestAnimationFrame(function() {
-            rafPending = false;
+        if (debounceTimer) return;
+        debounceTimer = setTimeout(function() {
+            debounceTimer = null;
             scanAndClick();
-        });
+        }, 100);
     });
 
     observer.observe(document.body, {

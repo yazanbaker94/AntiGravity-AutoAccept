@@ -15,8 +15,15 @@
   - `src/cdp/ConnectionManager.js` — persistent WebSocket, session pool, target management
   - `src/scripts/DOMObserver.js` — MutationObserver payload generator
 
+### Robustness Improvements
+- **Deferred Webview Guard**: DOM structure check moved inside `scanAndClick()` to avoid race condition with unhydrated React DOM on `targetCreated`
+- **Sequential Polling**: Replaced `setInterval` + async lock with recursive `setTimeout` — eliminates lock corruption from overlapping cycles
+- **Polling Hang Protection**: `Promise.race` with 3s timeout guarantees the command polling loop can never permanently hang
+- **Sibling-Indexed Cooldowns**: `_domPath()` now includes nth-child sibling indices at every DOM level, preventing cooldown collisions when multiple identical buttons appear in a list
+- **100ms Throttle**: MutationObserver fires scanAndClick within 100ms of first DOM change (down from 200ms)
+
 ### Localized Cooldowns
-- **Moved** all cooldown state into the injected DOM script via `data-aa-t` attributes
+- **Moved** all cooldown state into the injected DOM script via closure-scoped `clickCooldowns` map
 - **Eliminated** Node.js global `lastExpandTimes` map — cooldowns are fully per-element
 
 ### Continue Button Support (from v2.3.0)

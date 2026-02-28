@@ -24,6 +24,7 @@ class ConnectionManager {
         this.msgId = 0;
         this.pending = new Map();           // id → { resolve, reject, timer }
         this.sessions = new Map();          // targetId → sessionId
+        this.ignoredTargets = new Set();    // targetIds rejected (no-dom, not-agent-panel)
         this.activeCdpPort = null;
 
         // Lifecycle
@@ -50,6 +51,7 @@ class ConnectionManager {
         this.heartbeatTimer = null;
         this._closeWebSocket();
         this.sessions.clear();
+        this.ignoredTargets.clear();
         this._clearPending();
         this.log('[CDP] Connection manager stopped');
     }
@@ -171,6 +173,7 @@ class ConnectionManager {
         this.log('[CDP] Connection closed');
         this.ws = null;
         this.sessions.clear();
+        this.ignoredTargets.clear(); // Reset on reconnect — targets may have changed
         this._clearPending();
         clearInterval(this.heartbeatTimer);
         this.heartbeatTimer = null;
@@ -211,6 +214,7 @@ class ConnectionManager {
         const { targetId, type, url } = targetInfo;
         if (!this._isCandidate(targetInfo)) return;
         if (this.sessions.has(targetId)) return;
+        if (this.ignoredTargets.has(targetId)) return;
 
         const shortId = targetId.substring(0, 6);
 
@@ -230,6 +234,7 @@ class ConnectionManager {
                 const domResult = domCheck.result?.result?.value;
                 if (!domResult || domResult === 'no-dom') {
                     await this._send('Target.detachFromTarget', { sessionId }).catch(() => { });
+                    this.ignoredTargets.add(targetId);
                     return;
                 }
             }
@@ -239,6 +244,7 @@ class ConnectionManager {
 
             if (result === 'not-agent-panel') {
                 await this._send('Target.detachFromTarget', { sessionId }).catch(() => { });
+                this.ignoredTargets.add(targetId);
                 return;
             }
 
@@ -255,6 +261,8 @@ class ConnectionManager {
             this.sessions.delete(targetId);
             this.log(`[CDP] Target destroyed [${targetId.substring(0, 6)}]`);
         }
+        // Clean up ignored cache to prevent memory leak over long sessions
+        this.ignoredTargets.delete(targetId);
     }
 
     _handleSessionDetached(sessionId) {
@@ -336,7 +344,7 @@ class ConnectionManager {
             this.log(`[CDP] Heartbeat: ${targets.length} targets, ${this.sessions.size} sessions`);
 
             // Discover any new targets that appeared since last check
-            const candidates = targets.filter(t => this._isCandidate(t) && !this.sessions.has(t.targetId));
+            const candidates = targets.filter(t => this._isCandidate(t) && !this.sessions.has(t.targetId) && !this.ignoredTargets.has(t.targetId));
             if (candidates.length > 0) {
                 this.log(`[CDP] ${candidates.length} new targets found, attaching...`);
                 await Promise.allSettled(candidates.map(t => this._handleNewTarget(t)));

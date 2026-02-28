@@ -13,7 +13,7 @@ When the Antigravity agent proposes file edits, terminal commands, or asks for t
 | Strategy | What it handles | How |
 |---|---|---|
 | **VS Code Commands** (500ms) | Agent steps, terminal commands | Calls Antigravity's native accept commands |
-| **CDP + Webview Guard** (1500ms) | Run, Accept, Always Allow buttons | Isolated script runs only inside the agent panel |
+| **CDP + MutationObserver** (event-driven) | Run, Accept, Always Allow, Continue | One-shot script injected once, reacts instantly to DOM changes |
 
 ## Setup
 
@@ -96,9 +96,9 @@ alias antigravity='antigravity --remote-debugging-port=9333'
 4. Reload Window
 
 **Manual:**
-1. Copy `extension.js` and `package.json` to:
+1. Copy the `src/` directory, `package.json`, and `package-lock.json` to:
    ```
-   ~/.antigravity/extensions/YazanBaker.antigravity-autoaccept-2.1.0/
+   ~/.antigravity/extensions/YazanBaker.antigravity-autoaccept-3.0.0/
    ```
 2. Run `npm install` in that directory (installs `ws` dependency)
 3. Reload Window
@@ -130,8 +130,11 @@ To run multiple agents simultaneously and have the bot auto-click commands for a
 
 ## How it Works
 
+### Persistent CDP + MutationObserver (v3.0.0)
+The extension maintains a **persistent browser-level WebSocket** connection to Chromium's DevTools Protocol. Instead of polling every 1.5s, it injects a **MutationObserver** payload once per target. The observer reacts instantly when React mounts new button elements, with 100ms leading-edge throttle to prevent CPU spikes during streaming output.
+
 ### Webview Guard
-Antigravity's agent panel runs in an isolated Chromium process (OOPIF). The extension evaluates JavaScript on all CDP targets, but a **Webview Guard** checks for `.react-app-container` in the DOM — if it's not present, the script exits immediately. This prevents false positives on the main VS Code window (sidebars, markdown, menus).
+Antigravity's agent panel runs in an isolated Chromium process (OOPIF). The injected script uses a deferred `isAgentPanel()` check inside `scanAndClick()` — verifying `.react-app-container` existence dynamically on each scan rather than at injection time. This avoids a race condition where the DOM is unhydrated on `targetCreated`.
 
 ### Button Detection
 Inside the agent panel, a `TreeWalker` searches for buttons by text content using `startsWith` matching:
@@ -144,6 +147,7 @@ Inside the agent panel, a `TreeWalker` searches for buttons by text content usin
 | 4 | `allow this conversation` | Conversation-scoped permissions |
 | 5 | `allow` | Permission prompts |
 | 6 | `retry` | Retry prompts |
+| 7 | `continue` | Agent invocation limit resume |
 
 ### CDP Auto-Fix
 On activation, the extension checks if port 9333 is open (with 9222 fallback). If not, it shows a notification with:
@@ -194,7 +198,7 @@ Antigravity's agent panel runs in an isolated Chromium process. The VS Code Exte
 **Is it safe?**
 
 - **Localhost only** — the port binds to `127.0.0.1`, not `0.0.0.0`. No external machine can connect.
-- **Fully open source** — all ~500 lines are on GitHub. The extension finds buttons by text and clicks them. No data is read, no network requests, no telemetry.
+- **Fully open source** — all ~900 lines are on GitHub. The extension finds buttons by text and clicks them. No data is read, no network requests, no telemetry.
 - **Standard dev workflow** — `--remote-debugging-port` is the same flag used by VS Code extension developers and Electron app debugging.
 - **Shortcut patcher is scoped** — the auto-fix only modifies `.lnk` files whose target path contains "Antigravity".
 

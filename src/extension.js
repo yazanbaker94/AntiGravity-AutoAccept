@@ -19,7 +19,6 @@ const ACCEPT_COMMANDS = [
 ];
 
 let isEnabled = false;
-let isAccepting = false; // Async lock — prevents double-accepts
 let pollIntervalId = null;
 let statusBarItem = null;
 let outputChannel = null;
@@ -52,22 +51,28 @@ function startPolling() {
     const interval = config.get('pollInterval', 500);
     log(`Polling started (every ${interval}ms, ${ACCEPT_COMMANDS.length} commands)`);
 
-    // VS Code commands — with async lock and safety timeout
-    pollIntervalId = setInterval(async () => {
-        if (!isEnabled || isAccepting) return;
-        isAccepting = true;
-        // Safety timeout: force-release lock after 3s if commands hang
-        const safetyTimer = setTimeout(() => { isAccepting = false; }, 3000);
+    // Recursive setTimeout pattern — guarantees strict sequential execution.
+    // Unlike setInterval, the next cycle only starts AFTER the current one
+    // fully completes, eliminating the race condition where a safety timer
+    // could break a subsequent cycle's lock.
+    async function pollCycle() {
+        if (!isEnabled) return;
         try {
-            await Promise.allSettled(
+            // Promise.race ensures the loop continues even if VS Code API hangs.
+            // If executeCommand doesn't resolve within 3s, the timeout wins and
+            // the next cycle is scheduled regardless.
+            const timeoutPromise = new Promise(resolve => setTimeout(resolve, 3000));
+            const commandsPromise = Promise.allSettled(
                 ACCEPT_COMMANDS.map(cmd => vscode.commands.executeCommand(cmd))
             );
+            await Promise.race([commandsPromise, timeoutPromise]);
         } catch (e) { /* silent */ }
-        finally {
-            clearTimeout(safetyTimer);
-            isAccepting = false;
+        // Schedule next cycle only after this one completes
+        if (isEnabled) {
+            pollIntervalId = setTimeout(pollCycle, interval);
         }
-    }, interval);
+    }
+    pollIntervalId = setTimeout(pollCycle, interval);
 
     // Start persistent CDP connection manager
     if (connectionManager) {
@@ -76,9 +81,8 @@ function startPolling() {
 }
 
 function stopPolling() {
-    if (pollIntervalId) { clearInterval(pollIntervalId); pollIntervalId = null; }
+    if (pollIntervalId) { clearTimeout(pollIntervalId); pollIntervalId = null; }
     if (connectionManager) { connectionManager.stop(); }
-    isAccepting = false;
     log('Polling stopped');
 }
 
@@ -201,10 +205,13 @@ else { Write-Output "NOT_FOUND" }
                     'Restart Now'
                 ).then(action => {
                     if (action === 'Restart Now' && lnkPath) {
-                        const safePath = lnkPath.replace(/'/g, "''");
+                        // Safe path encoding: Base64-encode the path to handle Unicode, spaces,
+                        // and special characters without brittle string escaping.
+                        const pathB64 = Buffer.from(lnkPath, 'utf16le').toString('base64');
 
-                        // Sleeper payload: waits 2s for single-instance lock, then launches shortcut
-                        const sleeperScript = `Start-Sleep -Seconds 2; Start-Process -FilePath '${safePath}'`;
+                        // Sleeper payload: decodes the Base64 path at runtime, waits 2s for 
+                        // single-instance lock release, then launches the shortcut.
+                        const sleeperScript = `$p=[System.Text.Encoding]::Unicode.GetString([System.Convert]::FromBase64String('${pathB64}'));Start-Sleep -Seconds 2;Start-Process -FilePath $p`;
                         const b64Sleeper = Buffer.from(sleeperScript, 'utf16le').toString('base64');
 
                         // WMI Escape Hatch: spawns sleeper under WmiPrvSE.exe, outside IDE's Job Object
