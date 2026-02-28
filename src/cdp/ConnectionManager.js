@@ -396,13 +396,6 @@ class ConnectionManager {
             return configPort;
         }
 
-        // Fallback to legacy port 9222
-        if (configPort !== 9222 && await this._pingPort(9222)) {
-            this.activeCdpPort = 9222;
-            this.log('[CDP] ⚠ Using legacy port 9222');
-            return 9222;
-        }
-
         return null;
     }
 

@@ -107,20 +107,13 @@ function pingPort(port) {
 async function checkAndFixCDP() {
     const configPort = getConfiguredPort();
 
-    // 1. Try the configured port first (default 9333)
     if (await pingPort(configPort)) {
         log(`[CDP] Debug port ${configPort} active ✓`);
         return true;
     }
 
-    // 2. Graceful Fallback: try legacy port 9222
-    if (configPort !== 9222 && await pingPort(9222)) {
-        log(`[CDP] ⚠ Configured port ${configPort} offline. Legacy port 9222 is active. Using 9222.`);
-        return true;
-    }
-
-    // 3. Both failed — prompt user
-    log(`[CDP] ⚠ All ports refused — remote debugging not enabled`);
+    // Port refused — prompt user
+    log(`[CDP] ⚠ Port ${configPort} refused — remote debugging not enabled`);
     vscode.window.showErrorMessage(
         `⚡ AutoAccept needs Debug Mode (Port ${configPort}). Please apply the fix or update your shortcut.`,
         'Auto-Fix Shortcut (Windows)',
