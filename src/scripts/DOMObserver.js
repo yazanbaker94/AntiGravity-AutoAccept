@@ -23,6 +23,7 @@ function buildDOMObserverScript(customTexts) {
     // Prevents double-injection if the script is evaluated again on the same context.
     if (window.__AA_OBSERVER_ACTIVE) return 'already-active';
     window.__AA_OBSERVER_ACTIVE = true;
+    window.__AA_PAUSED = false;
 
     // ═══ WEBVIEW GUARD (deferred) ═══
     // Moved inside scanAndClick() to avoid race condition:
@@ -149,6 +150,7 @@ function buildDOMObserverScript(customTexts) {
 
     function scanAndClick() {
         pruneCooldowns();
+        if (window.__AA_PAUSED) return null;
 
         // ═══ DEFERRED WEBVIEW GUARD ═══
         // Dynamically checks DOM structure on each scan instead of at injection time.
@@ -190,7 +192,7 @@ function buildDOMObserverScript(customTexts) {
     // (React mounts button → then streams LLM text). A trailing debounce
     // would delay clicks until streaming stops, which is the wrong behavior.
     var debounceTimer = null;
-    var observer = new MutationObserver(function() {
+    window.__AA_OBSERVER = new MutationObserver(function() {
         if (debounceTimer) return;
         debounceTimer = setTimeout(function() {
             debounceTimer = null;
@@ -198,7 +200,7 @@ function buildDOMObserverScript(customTexts) {
         }, 100);
     });
 
-    observer.observe(document.body, {
+    window.__AA_OBSERVER.observe(document.body, {
         childList: true,
         subtree: true
     });
