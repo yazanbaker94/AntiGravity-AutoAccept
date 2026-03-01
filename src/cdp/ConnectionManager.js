@@ -49,6 +49,7 @@ class ConnectionManager {
         this.reconnectTimer = null;
         clearInterval(this.heartbeatTimer);
         this.heartbeatTimer = null;
+        this._disableObservers();
         this._closeWebSocket();
         this.sessions.clear();
         this.ignoredTargets.clear();
@@ -303,6 +304,36 @@ class ConnectionManager {
             }
         } catch (e) {
             // Session may be dead — will be cleaned up by detach/destroy events
+        }
+    }
+
+    // ─── Observer Disable (for stop/toggle) ───────────────────────────
+
+    _disableObservers() {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        if (this.sessions.size === 0) return;
+
+        this.log(`[CDP] Disabling ${this.sessions.size} observer(s)...`);
+
+        const killScript = `
+            if (window.__AA_OBSERVER) {
+                window.__AA_OBSERVER.disconnect();
+                window.__AA_OBSERVER = null;
+            }
+            window.__AA_OBSERVER_ACTIVE = false;
+            window.__AA_PAUSED = true;
+            'disabled';
+        `;
+
+        // Fire-and-forget: ws.send() synchronously queues data in the send buffer.
+        // The subsequent ws.close() performs a graceful WebSocket handshake that
+        // flushes the buffer before closing, guaranteeing delivery.
+        for (const [targetId, sessionId] of this.sessions) {
+            try {
+                const id = ++this.msgId;
+                const payload = { id, method: 'Runtime.evaluate', params: { expression: killScript }, sessionId };
+                this.ws.send(JSON.stringify(payload));
+            } catch (e) { /* ws may be closing */ }
         }
     }
 
