@@ -241,6 +241,7 @@ function activate(context) {
     connectionManager = new ConnectionManager({
         log,
         getPort: getConfiguredPort,
+        windowName: vscode.workspace.name || '',
         getCustomTexts: () => vscode.workspace.getConfiguration('autoAcceptV2').get('customButtonTexts', [])
     });
 

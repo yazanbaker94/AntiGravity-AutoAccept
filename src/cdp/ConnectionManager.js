@@ -13,11 +13,13 @@ class ConnectionManager {
      * @param {Function} options.log - Logging function
      * @param {Function} options.getPort - Returns configured CDP port
      * @param {Function} options.getCustomTexts - Returns custom button texts array
+     * @param {string} [options.windowName] - Current workspace name for window isolation
      */
-    constructor({ log, getPort, getCustomTexts }) {
+    constructor({ log, getPort, getCustomTexts, windowName }) {
         this.log = log;
         this.getPort = getPort;
         this.getCustomTexts = getCustomTexts;
+        this.windowName = windowName || '';  // For window isolation — filters page targets by title
 
         // Connection state
         this.ws = null;
@@ -211,12 +213,25 @@ class ConnectionManager {
     }
 
     async _handleNewTarget(targetInfo) {
-        const { targetId, type, url } = targetInfo;
+        const { targetId, type, url, title } = targetInfo;
         if (!this._isCandidate(targetInfo)) return;
         if (this.sessions.has(targetId)) return;
         if (this.ignoredTargets.has(targetId)) return;
 
         const shortId = targetId.substring(0, 6);
+
+        // ═══ WINDOW ISOLATION ═══
+        // CDP port is process-wide — all windows' targets are visible.
+        // Filter page targets by matching title to current workspace name,
+        // so we only inject into our own window's workbench frame.
+        if (type === 'page' && this.windowName) {
+            const pageTitle = (title || '').toLowerCase();
+            if (!pageTitle.includes(this.windowName.toLowerCase())) {
+                this.ignoredTargets.add(targetId);
+                this.log(`[CDP] ✗ Skipped [${shortId}] — window "${(title || '').substring(0, 40)}" ≠ "${this.windowName}"`);
+                return;
+            }
+        }
 
         try {
             const attachMsg = await this._send('Target.attachToTarget', { targetId, flatten: true });
