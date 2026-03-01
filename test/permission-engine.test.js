@@ -295,6 +295,39 @@ test('data-testid on plain DIV is NOT clicked', () => {
 });
 
 // ═════════════════════════════════════════════════════════════════════
+console.log('\n\x1b[1m--- Filename False Positive Prevention ---\x1b[0m');
+
+test('"accept-test.js" must NOT match "accept" (filename in cascade bar)', () => {
+    const btn = new El('BUTTON', 'accept-test.js');
+    run(makeDoc([btn]));
+    assert.ok(!btn._clicked, 'Filename button should NOT be clicked');
+});
+
+test('"accept_utils.py" must NOT match "accept"', () => {
+    const btn = new El('BUTTON', 'accept_utils.py');
+    run(makeDoc([btn]));
+    assert.ok(!btn._clicked);
+});
+
+test('"expand.js" must NOT match "expand"', () => {
+    const btn = new El('BUTTON', 'expand.js');
+    run(makeDoc([btn]));
+    assert.ok(!btn._clicked);
+});
+
+test('"Accept All" still matches "accept" (space after keyword)', () => {
+    const btn = new El('BUTTON', 'Accept All');
+    run(makeDoc([btn]));
+    assert.ok(btn._clicked);
+});
+
+test('"Run Alt+d" still matches "run" (space after keyword)', () => {
+    const btn = new El('BUTTON', 'Run Alt+d');
+    run(makeDoc([btn]));
+    assert.ok(btn._clicked);
+});
+
+// ═════════════════════════════════════════════════════════════════════
 console.log('\n\x1b[1m--- Expand Banner (Pass 2) ---\x1b[0m');
 
 test('"Expand" clicked when no action buttons exist', () => {

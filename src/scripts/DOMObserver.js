@@ -97,9 +97,7 @@ function buildDOMObserverScript(customTexts) {
             }
             var nodeText = (node.textContent || '').trim().toLowerCase();
             if (nodeText.length > 50) continue;
-            var isMatch = nodeText === text || 
-                (text.length >= 5 && nodeText.startsWith(text) && nodeText.length <= text.length * 3) ||
-                (nodeText.startsWith(text + ' ') && nodeText.length <= text.length * 5);
+            var isMatch = nodeText === text || nodeText.startsWith(text + ' ');
             if (isMatch) {
                 var clickable = closestClickable(node);
                 var tag2 = (clickable.tagName || '').toLowerCase();
