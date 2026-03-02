@@ -68,7 +68,9 @@ function buildDOMObserverScript(customTexts, blockedCommands, allowedCommands, a
 
     var COOLDOWN_MS = 5000;
     var EXPAND_COOLDOWN_MS = 8000;
+    var EXPAND_GLOBAL_THROTTLE_MS = 30000; // Global cooldown for ALL expand-type clicks
     var clickCooldowns = {};
+    var lastExpandClickTime = 0; // Global timestamp: last time ANY expand was clicked
 
     // Lightweight DOM path: walks up to 3 ancestors to create a structurally unique key.
     // Differentiates multiple "Accept" buttons in different DOM subtrees.
@@ -161,20 +163,37 @@ function buildDOMObserverScript(customTexts, blockedCommands, allowedCommands, a
 
                 var clickable = closestClickable(wNode);
                 var tag2 = (clickable.tagName || '').toLowerCase();
+                var isExpandType = (text === 'expand' || text === 'requires input');
                 if (tag2 === 'button' || tag2.includes('button') || clickable.getAttribute('role') === 'button' ||
                     tag2.includes('btn') || clickable.classList.contains('cursor-pointer') ||
-                    clickable.onclick || clickable.getAttribute('tabindex') === '0' ||
-                    text === 'expand' || text === 'requires input') {
+                    clickable.onclick || clickable.getAttribute('tabindex') === '0') {
                     // Idempotency guard: skip disabled/loading buttons
                     if (clickable.disabled || clickable.getAttribute('aria-disabled') === 'true' ||
                         clickable.classList.contains('loading') || clickable.querySelector('.codicon-loading')) {
                         continue;
                     }
-                    var btnKey = _domPath(clickable) + ':' + (clickable.textContent || '').trim().toLowerCase().substring(0, 30);
-                    var cooldown = (text === 'expand' || text === 'requires input') ? EXPAND_COOLDOWN_MS : COOLDOWN_MS;
-                    var lastClick = clickCooldowns[btnKey] || 0;
-                    if (lastClick && (Date.now() - lastClick < cooldown)) {
-                        continue;
+
+                    // Expand-specific guards: global throttle + text-based cooldown key
+                    // (text-based key survives React re-renders that change DOM paths)
+                    if (isExpandType) {
+                        // Global throttle: block ALL expand clicks for 30s after any expand
+                        if (Date.now() - lastExpandClickTime < EXPAND_GLOBAL_THROTTLE_MS) {
+                            continue;
+                        }
+                        // Text-based cooldown: uses button text instead of DOM path
+                        var expandKey = 'expand:' + (clickable.textContent || '').trim().toLowerCase().substring(0, 30);
+                        var expandLast = clickCooldowns[expandKey] || 0;
+                        if (expandLast && (Date.now() - expandLast < EXPAND_COOLDOWN_MS)) {
+                            continue;
+                        }
+                    } else {
+                        // Standard cooldown with DOM-path key (stable for non-expand buttons)
+                        var btnKey = _domPath(clickable) + ':' + (clickable.textContent || '').trim().toLowerCase().substring(0, 30);
+                        var cooldown = COOLDOWN_MS;
+                        var lastClick = clickCooldowns[btnKey] || 0;
+                        if (lastClick && (Date.now() - lastClick < cooldown)) {
+                            continue;
+                        }
                     }
                     best = { node: clickable, matchedText: text, priority: t };
                     if (t === 0) return best; // Priority 0 — can't do better
@@ -314,8 +333,15 @@ function buildDOMObserverScript(customTexts, blockedCommands, allowedCommands, a
             }
 
             // Record cooldown and click
-            var key = _domPath(btn) + ':' + (btn.textContent || '').trim().toLowerCase().substring(0, 30);
-            clickCooldowns[key] = Date.now();
+            var isExpandMatch = (matchedText === 'expand' || matchedText === 'requires input');
+            if (isExpandMatch) {
+                var expandKey = 'expand:' + (btn.textContent || '').trim().toLowerCase().substring(0, 30);
+                clickCooldowns[expandKey] = Date.now();
+                lastExpandClickTime = Date.now(); // Global throttle
+            } else {
+                var key = _domPath(btn) + ':' + (btn.textContent || '').trim().toLowerCase().substring(0, 30);
+                clickCooldowns[key] = Date.now();
+            }
             btn.click();
             return 'clicked:' + matchedText;
         }

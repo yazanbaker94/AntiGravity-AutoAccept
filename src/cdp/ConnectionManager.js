@@ -39,6 +39,7 @@ class ConnectionManager {
         this.reconnectTimer = null;
         this.heartbeatTimer = null;
         this.onStatusChange = null; // Callback when CDP status changes
+        this._sessionFailCounts = new Map(); // Consecutive heartbeat failures per targetId
     }
 
     /**
@@ -173,6 +174,7 @@ class ConnectionManager {
         this._closeWebSocket();
         this.sessions.clear();
         this.ignoredTargets.clear();
+        this._sessionFailCounts.clear();
         this._clearPending();
         this.log('[CDP] Connection manager stopped');
     }
@@ -300,6 +302,7 @@ class ConnectionManager {
         this.ws = null;
         this.sessions.clear();
         this.ignoredTargets.clear(); // Reset on reconnect — targets may have changed
+        this._sessionFailCounts.clear();
         this._clearPending();
         clearInterval(this.heartbeatTimer);
         this.heartbeatTimer = null;
@@ -409,8 +412,9 @@ class ConnectionManager {
             this.sessions.delete(targetId);
             this.log(`[CDP] Target destroyed [${targetId.substring(0, 6)}]`);
         }
-        // Clean up ignored cache to prevent memory leak over long sessions
+        // Clean up all caches to prevent memory leak over long sessions
         this.ignoredTargets.delete(targetId);
+        this._sessionFailCounts.delete(targetId);
     }
 
     _handleSessionDetached(sessionId) {
@@ -418,6 +422,7 @@ class ConnectionManager {
         for (const [tid, sid] of this.sessions) {
             if (sid === sessionId) {
                 this.sessions.delete(tid);
+                this._sessionFailCounts.delete(tid);
                 this.log(`[CDP] Session detached [${tid.substring(0, 6)}]`);
                 break;
             }
@@ -447,15 +452,44 @@ class ConnectionManager {
 
         const shortId = targetId.substring(0, 6);
 
+        // Bounded retry: poll for a valid execution context instead of a
+        // hardcoded sleep. Tries up to 5 times at 100ms intervals (500ms max).
+        let contextReady = false;
+        for (let attempt = 0; attempt < 5; attempt++) {
+            await new Promise(r => setTimeout(r, 100));
+            try {
+                await this._send('Runtime.evaluate', {
+                    expression: '"context-alive"'
+                }, sessionId);
+                contextReady = true;
+                break;
+            } catch (e) {
+                // Context not ready yet — retry
+            }
+        }
+        if (!contextReady) {
+            this.log(`[CDP] [${shortId}] Context never stabilized after 500ms, skipping re-inject`);
+            return;
+        }
+
+        // Reset the idempotency guard (isolated try/catch so a destroyed
+        // context doesn't prevent the re-injection attempt below).
         try {
-            // Small delay to let the new execution context stabilize
-            await new Promise(r => setTimeout(r, 500));
+            await this._send('Runtime.evaluate', {
+                expression: 'window.__AA_OBSERVER_ACTIVE = false; "reset"'
+            }, sessionId);
+        } catch (e) {
+            // Context may have been destroyed between the probe and this call.
+            // Safe to ignore — a fresh context won't have the flag anyway.
+        }
+
+        try {
             const result = await this._injectObserver(sessionId);
             if (result && result !== 'not-agent-panel') {
                 this.log(`[CDP] ✓ Re-injected [${shortId}] → ${result}`);
             }
         } catch (e) {
-            // Session may be dead — will be cleaned up by detach/destroy events
+            this.log(`[CDP] Re-inject failed [${shortId}]: ${e.message}`);
         }
     }
 
@@ -501,6 +535,67 @@ class ConnectionManager {
             if (candidates.length > 0) {
                 this.log(`[CDP] ${candidates.length} new targets found, attaching...`);
                 await Promise.allSettled(candidates.map(t => this._handleNewTarget(t)));
+            }
+
+            // Verify existing sessions still have a live observer.
+            // Uses Promise.allSettled for concurrent evaluation — avoids
+            // sequential 5s-timeout blocking per dead session.
+            if (this.sessions.size === 0) return;
+
+            const sessionEntries = [...this.sessions.entries()];
+            const healthResults = await Promise.allSettled(
+                sessionEntries.map(async ([targetId, sessionId]) => {
+                    const check = await this._send('Runtime.evaluate', {
+                        expression: '!!window.__AA_OBSERVER_ACTIVE'
+                    }, sessionId);
+                    return { targetId, sessionId, alive: check.result?.result?.value === true };
+                })
+            );
+
+            const deadSessions = [];
+            for (let i = 0; i < healthResults.length; i++) {
+                const { status, value, reason } = healthResults[i];
+                const targetId = sessionEntries[i][0];
+                const sessionId = sessionEntries[i][1];
+                const shortId = targetId.substring(0, 6);
+
+                if (status === 'fulfilled') {
+                    // Reset consecutive fail counter on any successful communication
+                    this._sessionFailCounts.delete(targetId);
+
+                    if (!value.alive) {
+                        this.log(`[CDP] Session [${shortId}] observer dead, re-injecting...`);
+                        // Reset guard (isolated — ignore failures)
+                        try {
+                            await this._send('Runtime.evaluate', {
+                                expression: 'window.__AA_OBSERVER_ACTIVE = false; "reset"'
+                            }, sessionId);
+                        } catch (e) { /* context may be gone — safe to ignore */ }
+                        try {
+                            const result = await this._injectObserver(sessionId);
+                            this.log(`[CDP] ✓ Heartbeat re-injected [${shortId}] → ${result}`);
+                        } catch (e) {
+                            this.log(`[CDP] Heartbeat re-inject failed [${shortId}]: ${e.message}`);
+                        }
+                    }
+                } else {
+                    // Session unreachable — track consecutive failures
+                    const failCount = (this._sessionFailCounts.get(targetId) || 0) + 1;
+                    this._sessionFailCounts.set(targetId, failCount);
+                    if (failCount >= 3) {
+                        deadSessions.push({ targetId, sessionId });
+                        this._sessionFailCounts.delete(targetId);
+                        this.log(`[CDP] Session [${shortId}] unreachable 3x consecutively, pruning`);
+                    }
+                }
+            }
+
+            // Prune dead sessions with clean detach
+            for (const { targetId, sessionId } of deadSessions) {
+                try {
+                    await this._send('Target.detachFromTarget', { sessionId });
+                } catch (e) { /* already detached — ignore */ }
+                this.sessions.delete(targetId);
             }
         } catch (e) {
             // Connection probably dead — onClose will trigger reconnect

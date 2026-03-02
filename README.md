@@ -98,7 +98,7 @@ alias antigravity='antigravity --remote-debugging-port=9333'
 **Manual:**
 1. Copy the `src/` directory, `package.json`, and `package-lock.json` to:
    ```
-   ~/.antigravity/extensions/YazanBaker.antigravity-autoaccept-3.1.0/
+   ~/.antigravity/extensions/YazanBaker.antigravity-autoaccept-3.2.0/
    ```
 2. Run `npm install` in that directory (installs `ws` dependency)
 3. Reload Window
@@ -147,6 +147,17 @@ The button scanner walks the DOM tree **exactly once** per cycle, checking all k
 ### Webview Guard
 Antigravity's agent panel runs in an isolated Chromium process (OOPIF). The injected script uses a deferred `isAgentPanel()` check inside `scanAndClick()` — verifying `.react-app-container` existence dynamically on each scan rather than at injection time. This avoids a race condition where the DOM is unhydrated on `targetCreated`.
 
+### Heartbeat Self-Healing (v3.2.0)
+The CDP connection now validates existing sessions every heartbeat cycle (30s). If a session's MutationObserver is dead (execution context cleared by webview navigation or React hot-reload), it automatically re-injects the observer — no reconnection needed. Sessions unreachable 3 times consecutively are cleanly detached and pruned. *(Fixes the "stops clicking after ~1 hour" bug.)*
+
+### Expand Button Loop Prevention (v3.2.0)
+Three-layer defense prevents the Preview panel's "Expand" button from being repeatedly clicked in an infinite loop:
+1. **Strict interactive targeting** — expand must be a real `<button>` element, not any `<div>` with "expand" text
+2. **Text-based cooldown keys** — survives React re-renders that change DOM paths and invalidate path-based cooldowns
+3. **30s global expand throttle** — blocks all expand-type clicks for 30s, breaking the MutationObserver feedback loop
+
+*(Thanks to [@ljjay](https://github.com/ljjay) for the detailed [bug report](https://github.com/yazanbaker94/AntiGravity-AutoAccept/pull/20)!)*
+
 ### Button Detection
 Inside the agent panel, a `TreeWalker` searches for buttons by text content using `startsWith` matching with **word-boundary checks** to prevent false positives (e.g. `accept-test.js` won't match `accept`):
 
@@ -172,9 +183,9 @@ On activation, the extension checks if port 9333 is open (with 9222 fallback). I
 
 ### Bot stops working after a few hours
 
-**Cause:** Antigravity silently restarts its Electron process (auto-updates, memory pressure, or extension host crash). The new process doesn't have `--remote-debugging-port=9333`.
+**Cause:** Either (a) Antigravity silently restarts its Electron process (auto-updates, memory pressure, or extension host crash) and the new process doesn't have `--remote-debugging-port=9333`, or (b) the webview's execution context was cleared by a navigation/hot-reload (fixed in v3.2.0 with heartbeat self-healing).
 
-**Fix:** Close **all** Antigravity windows completely, then reopen from your patched shortcut. A simple Reload Window (`Ctrl+Shift+P` → Reload) won't fix this — you need a full restart.
+**Fix:** Update to v3.2.0+ — the heartbeat now auto-detects and re-injects dead observers. If it still doesn't work, close **all** Antigravity windows completely, then reopen from your patched shortcut.
 
 ### Bot is ON but not clicking anything
 
