@@ -156,8 +156,6 @@ Three-layer defense prevents the Preview panel's "Expand" button from being repe
 2. **Text-based cooldown keys** — survives React re-renders that change DOM paths and invalidate path-based cooldowns
 3. **30s global expand throttle** — blocks all expand-type clicks for 30s, breaking the MutationObserver feedback loop
 
-*(Thanks to [@ljjay](https://github.com/ljjay) for the detailed [bug report](https://github.com/yazanbaker94/AntiGravity-AutoAccept/pull/20)!)*
-
 ### Button Detection
 Inside the agent panel, a `TreeWalker` searches for buttons by text content using `startsWith` matching with **word-boundary checks** to prevent false positives (e.g. `accept-test.js` won't match `accept`):
 
