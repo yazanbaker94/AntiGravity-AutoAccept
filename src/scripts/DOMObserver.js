@@ -67,8 +67,10 @@ function buildDOMObserverScript(customTexts, blockedCommands, allowedCommands, a
     window.__AA_PAUSED = false; // Kill switch: set to true to stop all clicking
 
     var COOLDOWN_MS = 5000;
-    var EXPAND_COOLDOWN_MS = 8000;
+    var EXPAND_COOLDOWN_MS = 30000; // 30s global cooldown for expand buttons
     var clickCooldowns = {};
+    var lastExpandClickTime = 0;    // Global expand timestamp — survives React re-renders
+    var expandClickedTexts = {};    // Tracks expand buttons by text signature — permanent dedup
 
     // Lightweight DOM path: walks up to 3 ancestors to create a structurally unique key.
     // Differentiates multiple "Accept" buttons in different DOM subtrees.
@@ -163,15 +165,30 @@ function buildDOMObserverScript(customTexts, blockedCommands, allowedCommands, a
                 var tag2 = (clickable.tagName || '').toLowerCase();
                 if (tag2 === 'button' || tag2.includes('button') || clickable.getAttribute('role') === 'button' ||
                     tag2.includes('btn') || clickable.classList.contains('cursor-pointer') ||
-                    clickable.onclick || clickable.getAttribute('tabindex') === '0' ||
-                    text === 'expand' || text === 'requires input') {
+                    clickable.onclick || clickable.getAttribute('tabindex') === '0') {
                     // Idempotency guard: skip disabled/loading buttons
                     if (clickable.disabled || clickable.getAttribute('aria-disabled') === 'true' ||
                         clickable.classList.contains('loading') || clickable.querySelector('.codicon-loading')) {
                         continue;
                     }
+                    // Expand dedup: TWO layers of protection.
+                    // Layer 1: global timestamp cooldown (30s) for ALL expand clicks.
+                    // Layer 2: text-signature dedup — same text is NEVER clicked twice.
+                    // Both survive React re-renders (JS variables, not DOM attributes).
+                    var isExpandType = (text === 'expand' || text === 'requires input');
+                    if (isExpandType) {
+                        // Layer 1: global timestamp
+                        if (lastExpandClickTime && (Date.now() - lastExpandClickTime < EXPAND_COOLDOWN_MS)) {
+                            continue;
+                        }
+                        // Layer 2: text signature dedup
+                        var expandSig = (clickable.textContent || '').trim().toLowerCase().substring(0, 60);
+                        if (expandClickedTexts[expandSig]) {
+                            continue;
+                        }
+                    }
                     var btnKey = _domPath(clickable) + ':' + (clickable.textContent || '').trim().toLowerCase().substring(0, 30);
-                    var cooldown = (text === 'expand' || text === 'requires input') ? EXPAND_COOLDOWN_MS : COOLDOWN_MS;
+                    var cooldown = isExpandType ? EXPAND_COOLDOWN_MS : COOLDOWN_MS;
                     var lastClick = clickCooldowns[btnKey] || 0;
                     if (lastClick && (Date.now() - lastClick < cooldown)) {
                         continue;
@@ -316,6 +333,12 @@ function buildDOMObserverScript(customTexts, blockedCommands, allowedCommands, a
             // Record cooldown and click
             var key = _domPath(btn) + ':' + (btn.textContent || '').trim().toLowerCase().substring(0, 30);
             clickCooldowns[key] = Date.now();
+            // Global expand cooldown + text-signature dedup
+            if (matchedText === 'expand' || matchedText === 'requires input') {
+                lastExpandClickTime = Date.now();
+                var sig = (btn.textContent || '').trim().toLowerCase().substring(0, 60);
+                expandClickedTexts[sig] = true;
+            }
             btn.click();
             return 'clicked:' + matchedText;
         }
