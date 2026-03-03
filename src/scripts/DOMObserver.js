@@ -222,7 +222,7 @@ function buildDOMObserverScript(customTexts, blockedCommands, allowedCommands, a
     }
 
     // ═══ COMMAND FILTERING ═══
-    var TERMINAL_BUTTON_TEXTS = ['run'];
+    var TERMINAL_BUTTON_TEXTS = ['run', 'always allow', 'allow this conversation', 'allow'].concat(${JSON.stringify(customTexts || [])});
 
     /**
      * Walks up the DOM from a button to find the nearest command preview.

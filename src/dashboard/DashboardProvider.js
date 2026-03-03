@@ -120,38 +120,58 @@ class DashboardProvider {
                 vscode.commands.executeCommand('autoAcceptV2.toggle');
                 break;
             case 'updateConfig': {
-                await config.update(msg.key, msg.value, vscode.ConfigurationTarget.Global);
-                this._pushState();
+                try {
+                    await config.update(msg.key, msg.value, vscode.ConfigurationTarget.Workspace);
+                    setTimeout(() => this._pushState(), 50);
+                } catch (e) {
+                    this.pushActivity(`Failed to update ${msg.key}: ${e.message}`, 'error');
+                }
                 break;
             }
             case 'addBlocked': {
                 const list = [...config.get('blockedCommands', [])];
                 if (msg.value && !list.includes(msg.value)) {
                     list.push(msg.value);
-                    await config.update('blockedCommands', list, vscode.ConfigurationTarget.Global);
+                    try {
+                        await config.update('blockedCommands', list, vscode.ConfigurationTarget.Workspace);
+                        setTimeout(() => this._pushState(), 50);
+                    } catch (e) {
+                        this.pushActivity(`Failed to block command: ${e.message}`, 'error');
+                    }
                 }
-                this._pushState();
                 break;
             }
             case 'removeBlocked': {
                 const list = config.get('blockedCommands', []).filter(c => c !== msg.value);
-                await config.update('blockedCommands', list, vscode.ConfigurationTarget.Global);
-                this._pushState();
+                try {
+                    await config.update('blockedCommands', list, vscode.ConfigurationTarget.Workspace);
+                    setTimeout(() => this._pushState(), 50);
+                } catch (e) {
+                    this.pushActivity(`Failed to remove blocked command: ${e.message}`, 'error');
+                }
                 break;
             }
             case 'addAllowed': {
                 const list = [...config.get('allowedCommands', [])];
                 if (msg.value && !list.includes(msg.value)) {
                     list.push(msg.value);
-                    await config.update('allowedCommands', list, vscode.ConfigurationTarget.Global);
+                    try {
+                        await config.update('allowedCommands', list, vscode.ConfigurationTarget.Workspace);
+                        setTimeout(() => this._pushState(), 50);
+                    } catch (e) {
+                        this.pushActivity(`Failed to allow command: ${e.message}`, 'error');
+                    }
                 }
-                this._pushState();
                 break;
             }
             case 'removeAllowed': {
                 const list = config.get('allowedCommands', []).filter(c => c !== msg.value);
-                await config.update('allowedCommands', list, vscode.ConfigurationTarget.Global);
-                this._pushState();
+                try {
+                    await config.update('allowedCommands', list, vscode.ConfigurationTarget.Workspace);
+                    setTimeout(() => this._pushState(), 50);
+                } catch (e) {
+                    this.pushActivity(`Failed to remove allowed command: ${e.message}`, 'error');
+                }
                 break;
             }
             case 'refresh':

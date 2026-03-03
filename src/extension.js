@@ -25,6 +25,7 @@ const ALL_ACCEPT_COMMANDS = [
 const TERMINAL_COMMANDS = [
     'antigravity.terminalCommand.accept',
     'antigravity.terminalCommand.run',
+    'antigravity.command.accept',
 ];
 
 /**

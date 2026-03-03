@@ -41,7 +41,7 @@
                     "items": {
                         "type": "string"
                     },
-                    "scope": "application",
+                    "scope": "window",
                     "description": "Extra button texts to auto-click (for i18n or custom UI). E.g. ['toujours autoriser', 'siempre permitir']"
                 },
                 "autoAcceptV2.cdpPort": {
@@ -62,7 +62,7 @@
                     "items": {
                         "type": "string"
                     },
-                    "scope": "application",
+                    "scope": "window",
                     "description": "Terminal command patterns to NEVER auto-run (e.g. 'rm -rf', 'git push --force', 'DROP TABLE'). Matched case-insensitively."
                 },
                 "autoAcceptV2.allowedCommands": {
@@ -71,7 +71,7 @@
                     "items": {
                         "type": "string"
                     },
-                    "scope": "application",
+                    "scope": "window",
                     "description": "If non-empty, ONLY auto-run terminal commands matching these patterns. Blocklist takes priority over allowlist."
                 }
             }
