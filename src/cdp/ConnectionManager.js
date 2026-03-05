@@ -470,6 +470,12 @@ class ConnectionManager {
             this.autoAcceptFileEdits
         );
         try {
+            // Force-clear stale observer flag from previous sessions.
+            // Without this, webviews that retain window globals across extension
+            // restarts would return 'already-active' with a dead observer.
+            await this._send('Runtime.evaluate', {
+                expression: 'if (typeof window !== "undefined") { if (typeof window.__AA_CLEANUP === "function") window.__AA_CLEANUP(); window.__AA_OBSERVER_ACTIVE = false; }'
+            }, sessionId).catch(() => { });
             const evalMsg = await this._send('Runtime.evaluate', { expression: script }, sessionId);
             if (evalMsg.error) {
                 this.log(`[CDP] Injection CDP error: ${JSON.stringify(evalMsg.error)}`);
