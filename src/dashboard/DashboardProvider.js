@@ -83,6 +83,7 @@ class DashboardProvider {
                 pollInterval: config.get('pollInterval', 500),
                 cdpPort: config.get('cdpPort', 9333),
                 customButtonTexts: config.get('customButtonTexts', []),
+                autoContinuePhrase: config.get('autoContinuePhrase', 'whats next'),
                 totalClicks: status.totalClicks || 0,
                 timeSavedMinutes: status.timeSavedMinutes || 0,
                 firstClickDate: status.firstClickDate || null,
@@ -411,6 +412,13 @@ class DashboardProvider {
                 <span class="slider"></span>
             </label>
         </div>
+        <div class="toggle-row">
+            <div>
+                <div class="toggle-label">Auto-Continue Phrase</div>
+                <div class="toggle-desc">Phrase sent when agent finishes. Leave empty to disable auto-continue.</div>
+            </div>
+            <input type="text" id="input-continue-phrase" style="width:160px;padding:6px 10px;background:var(--input-bg);border:1px solid var(--input-border);border-radius:4px;color:var(--fg);font-size:12px;outline:none;" placeholder="whats next" onchange="updateConfig('autoContinuePhrase', this.value)">
+        </div>
     </div>
 
     <div class="card">
@@ -517,6 +525,8 @@ class DashboardProvider {
 
         // Settings
         document.getElementById('chk-file-edits').checked = data.autoAcceptFileEdits;
+        var phraseInput = document.getElementById('input-continue-phrase');
+        if (phraseInput && document.activeElement !== phraseInput) phraseInput.value = data.autoContinuePhrase || '';
 
         // Lists
         renderList('list-blocked', data.blockedCommands, 'removeBlocked');

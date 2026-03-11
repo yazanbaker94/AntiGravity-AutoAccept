@@ -13,11 +13,13 @@ class ConnectionManager {
      * @param {Function} options.log - Logging function
      * @param {Function} options.getPort - Returns configured CDP port
      * @param {Function} options.getCustomTexts - Returns custom button texts array
+     * @param {Function} options.getAutoContinuePhrase - Returns auto-continue phrase
      */
-    constructor({ log, getPort, getCustomTexts }) {
+    constructor({ log, getPort, getCustomTexts, getAutoContinuePhrase }) {
         this.log = log;
         this.getPort = getPort;
         this.getCustomTexts = getCustomTexts;
+        this.getAutoContinuePhrase = getAutoContinuePhrase || (() => 'whats next');
 
         // Connection state
         this.ws = null;
@@ -344,8 +346,21 @@ class ConnectionManager {
     _isCandidate(targetInfo) {
         const { type, url } = targetInfo;
         if (!url) return false;
-        // Skip service workers and web workers — they have no DOM or window
-        if (type === 'service_worker' || type === 'worker' || type === 'shared_worker') return false;
+        // Always skip service workers and shared workers — they never have DOM
+        if (type === 'service_worker' || type === 'shared_worker') return false;
+
+        // Antigravity IDE (2026+) exposes ALL targets as type:"worker",
+        // including the main workbench and agent panels. Accept workers
+        // that have VS Code workbench/agent URLs — the downstream
+        // _handleNewTarget() runtime check (window/document probe) will
+        // correctly filter out genuine headless workers.
+        if (type === 'worker') {
+            return url.includes('workbench') ||
+                url.includes('vscode-webview://') ||
+                url.includes('jetski-agent') ||
+                url.includes('vscode-file://');
+        }
+
         return type === 'page' ||
             url.includes('vscode-webview://') ||
             url.includes('webview') ||
@@ -490,7 +505,8 @@ class ConnectionManager {
             this.getCustomTexts(),
             this.blockedCommands,
             this.allowedCommands,
-            this.autoAcceptFileEdits
+            this.autoAcceptFileEdits,
+            this.getAutoContinuePhrase()
         );
         try {
             // Force-clear stale observer flag from previous sessions.

@@ -50,6 +50,7 @@ let cachedAutoAcceptFileEdits = true;
 let cachedBlockedCommands = [];
 let cachedAllowedCommands = [];
 let cachedHasFilters = false;
+let cachedAutoContinuePhrase = 'whats next';
 
 function refreshConfig() {
     const config = vscode.workspace.getConfiguration('autoAcceptV2');
@@ -69,16 +70,21 @@ function refreshConfig() {
     cachedBlockedCommands = newBlocked;
     cachedAllowedCommands = newAllowed;
     cachedHasFilters = newHasFilters;
-    log(`[Config] hasFilters=${cachedHasFilters}, blocked=[${newBlocked.join(',')}], fileEdits=${newFileEdits}`);
+    cachedAutoContinuePhrase = config.get('autoContinuePhrase', 'whats next');
+    log(`[Config] hasFilters=${cachedHasFilters}, blocked=[${newBlocked.join(',')}], fileEdits=${newFileEdits}, autoContinue="${cachedAutoContinuePhrase}"`);
 
     // Hot-reload: push updated config to live CDP sessions
     if (connectionManager) {
         connectionManager.setCommandFilters(newBlocked, newAllowed);
         connectionManager.pushFilterUpdate(newBlocked, newAllowed);
 
-        // Re-inject observers when file edit setting changes (button list is baked at inject time)
-        if (connectionManager.autoAcceptFileEdits !== newFileEdits) {
+        // Re-inject observers when file edit setting or autoContinuePhrase changes
+        // (these are baked into the script at inject time)
+        const needsReinject = connectionManager.autoAcceptFileEdits !== newFileEdits ||
+            connectionManager._lastAutoContinuePhrase !== cachedAutoContinuePhrase;
+        if (needsReinject) {
             connectionManager.autoAcceptFileEdits = newFileEdits;
+            connectionManager._lastAutoContinuePhrase = cachedAutoContinuePhrase;
             connectionManager.reinjectAll();
         }
     }
@@ -346,13 +352,14 @@ else { Write-Output "NOT_FOUND" }
 // ─── Activation ───────────────────────────────────────────────────────
 function activate(context) {
     outputChannel = vscode.window.createOutputChannel('AntiGravity AutoAccept');
-    log('Extension activating (v3.0.0)');
+    log('Extension activating (v3.8.0)');
 
     // Initialize persistent CDP connection manager
     connectionManager = new ConnectionManager({
         log,
         getPort: getConfiguredPort,
-        getCustomTexts: () => vscode.workspace.getConfiguration('autoAcceptV2').get('customButtonTexts', [])
+        getCustomTexts: () => vscode.workspace.getConfiguration('autoAcceptV2').get('customButtonTexts', []),
+        getAutoContinuePhrase: () => cachedAutoContinuePhrase
     });
 
     // Refresh dashboard when CDP status changes (connect/disconnect)
@@ -458,7 +465,8 @@ function activate(context) {
             currentMilestone,
             currentRank: MILESTONE_RANKS[currentMilestone] || null,
             nextMilestone: nextM || null,
-            nextRank: nextM ? MILESTONE_RANKS[nextM] : null
+            nextRank: nextM ? MILESTONE_RANKS[nextM] : null,
+            autoContinuePhrase: cachedAutoContinuePhrase
         };
     });
 

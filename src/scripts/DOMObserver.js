@@ -11,10 +11,11 @@
  * @param {boolean} [autoAcceptFileEdits=true] - Whether to auto-accept file edit buttons
  * @returns {string} JavaScript source to evaluate via CDP Runtime.evaluate
  */
-function buildDOMObserverScript(customTexts, blockedCommands, allowedCommands, autoAcceptFileEdits) {
+function buildDOMObserverScript(customTexts, blockedCommands, allowedCommands, autoAcceptFileEdits, autoContinuePhrase) {
     blockedCommands = blockedCommands || [];
     allowedCommands = allowedCommands || [];
     if (autoAcceptFileEdits === undefined) autoAcceptFileEdits = true;
+    if (autoContinuePhrase === undefined) autoContinuePhrase = 'whats next';
 
     const allTexts = [
         'run',  // Primary action button
@@ -49,6 +50,7 @@ function buildDOMObserverScript(customTexts, blockedCommands, allowedCommands, a
     var BLOCKED_COMMANDS = ${JSON.stringify(blockedCommands)};
     var ALLOWED_COMMANDS = ${JSON.stringify(allowedCommands)};
     var HAS_FILTERS = BLOCKED_COMMANDS.length > 0 || ALLOWED_COMMANDS.length > 0;
+    var AUTO_CONTINUE_PHRASE = ${JSON.stringify(autoContinuePhrase)};
 
     // ═══ IDEMPOTENT TEARDOWN ═══
     // Clean up any previous state (observer, intervals) to prevent leaks on re-injection.
@@ -358,7 +360,48 @@ function buildDOMObserverScript(customTexts, blockedCommands, allowedCommands, a
             var MAX_SCANS = 5;
             for (var scan = 0; scan < MAX_SCANS; scan++) {
                 var match = findButton(document.body, allTexts);
-                if (!match) return null;
+                if (!match) {
+                    // ═══ Auto-continue: type "whats next" and press send ═══
+                    // First check if there's a STOP button — that means AI is still generating
+                    var stopBtn = document.querySelector('button[data-tooltip-id="input-send-button-stop-tooltip"]');
+                    if (stopBtn) return null; // AI is still generating, don't interrupt
+
+                    // Cooldown: don't spam auto-continue more than once per 30s
+                    var now = Date.now();
+                    if (window.__AA_LAST_CONTINUE && (now - window.__AA_LAST_CONTINUE < 30000)) return null;
+
+                    // Auto-continue disabled if phrase is empty
+                    if (!AUTO_CONTINUE_PHRASE) return null;
+
+                    // Find the input textbox FIRST (send button is disabled until text is typed)
+                    var input = document.querySelector('div[contenteditable="true"][role="textbox"]');
+                    if (!input || (input.textContent || '').trim()) return null; // input missing or already has text
+
+                    // Type "whats next" into the input
+                    window.__AA_LAST_CONTINUE = now;
+                    input.focus();
+                    document.execCommand('selectAll', false);
+                    document.execCommand('insertText', false, AUTO_CONTINUE_PHRASE);
+                    _log('auto-continue: typed "' + AUTO_CONTINUE_PHRASE + '"');
+
+                    // Wait for React to process the input and enable the send button
+                    setTimeout(function() {
+                        var b = document.querySelector('button[data-tooltip-id="input-send-button-send-tooltip"]');
+                        if (!b) {
+                            var cands = document.querySelectorAll('button[aria-label*="send" i], button[aria-label*="Send" i]');
+                            for (var ri = 0; ri < cands.length; ri++) {
+                                if (!cands[ri].disabled) { b = cands[ri]; break; }
+                            }
+                        }
+                        if (b && !b.disabled) {
+                            b.click();
+                            _log('auto-continue: clicked send');
+                        } else {
+                            _log('auto-continue: send button still disabled after typing');
+                        }
+                    }, 500);
+                    return 'auto-continue';
+                }
 
                 var btn = match.node;
                 var matchedText = match.matchedText;

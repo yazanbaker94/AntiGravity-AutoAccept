@@ -4,6 +4,7 @@ dist
 out
 *.vsix
 .agent
+.docs
 *.code-workspace
 .DS_Store
 .vscode-test
@@ -15,3 +16,6 @@ temp_vsix
 vsix_check
 temp_extract
 *.zip
+test/probe*.js
+test/*_output.txt
+cdp_targets.txt

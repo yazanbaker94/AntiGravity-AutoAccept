@@ -2,7 +2,7 @@
     "name": "antigravity-autoaccept",
     "displayName": "AntiGravity AutoAccept",
     "description": "Auto-accept Run, Accept, and Always Allow buttons in Antigravity via CDP with Webview Guard isolation.",
-    "version": "3.7.8",
+    "version": "3.8.0",
     "publisher": "YazanBaker",
     "icon": "images/icon.png",
     "engines": {
@@ -73,6 +73,12 @@
                     },
                     "scope": "application",
                     "description": "If non-empty, ONLY auto-run terminal commands matching these patterns. Blocklist takes priority over allowlist."
+                },
+                "autoAcceptV2.autoContinuePhrase": {
+                    "type": "string",
+                    "default": "whats next",
+                    "scope": "window",
+                    "description": "Phrase to type when auto-continuing after the agent finishes. Set empty to disable auto-continue."
                 }
             }
         }
