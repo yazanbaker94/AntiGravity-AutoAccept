@@ -88,6 +88,7 @@ const MILESTONE_RANKS = {
  * never read from registry on every poll tick (avoids I/O spam).
  */
 let cachedAutoAcceptFileEdits = true;
+let cachedAutoRetryEnabled = true;
 let cachedBlockedCommands = [];
 let cachedAllowedCommands = [];
 let cachedHasFilters = false;
@@ -95,6 +96,7 @@ let cachedHasFilters = false;
 function refreshConfig() {
     const config = vscode.workspace.getConfiguration('autoAcceptV2');
     const newFileEdits = config.get('autoAcceptFileEdits', true);
+    const newAutoRetry = config.get('autoRetryEnabled', true);
     const newBlocked = config.get('blockedCommands', []);
     const newAllowed = config.get('allowedCommands', []);
     const newHasFilters = newBlocked.length > 0 || newAllowed.length > 0;
@@ -107,10 +109,11 @@ function refreshConfig() {
     }
 
     cachedAutoAcceptFileEdits = newFileEdits;
+    cachedAutoRetryEnabled = newAutoRetry;
     cachedBlockedCommands = newBlocked;
     cachedAllowedCommands = newAllowed;
     cachedHasFilters = newHasFilters;
-    log(`[Config] hasFilters=${cachedHasFilters}, blocked=[${newBlocked.join(',')}], fileEdits=${newFileEdits}`);
+    log(`[Config] hasFilters=${cachedHasFilters}, blocked=[${newBlocked.join(',')}], fileEdits=${newFileEdits}, autoRetry=${newAutoRetry}`);
 
     // Hot-reload: push updated config to live CDP sessions
     if (connectionManager) {
@@ -120,6 +123,11 @@ function refreshConfig() {
         // Re-inject observers when file edit setting changes (button list is baked at inject time)
         if (connectionManager.autoAcceptFileEdits !== newFileEdits) {
             connectionManager.autoAcceptFileEdits = newFileEdits;
+            connectionManager.reinjectAll();
+        }
+        // Re-inyectar cuando cambia el ajuste de auto-retry
+        if (connectionManager.autoRetryEnabled !== newAutoRetry) {
+            connectionManager.autoRetryEnabled = newAutoRetry;
             connectionManager.reinjectAll();
         }
     }

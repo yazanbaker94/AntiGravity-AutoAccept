@@ -9,18 +9,20 @@
  * @param {string[]} blockedCommands - Command patterns to never auto-run
  * @param {string[]} allowedCommands - If non-empty, only auto-run matching patterns
  * @param {boolean} [autoAcceptFileEdits=true] - Whether to auto-accept file edit buttons
+ * @param {boolean} [autoRetryEnabled=true] - Whether to auto-retry on error contexts
  * @returns {string} JavaScript source to evaluate via CDP Runtime.evaluate
  */
-function buildDOMObserverScript(customTexts, blockedCommands, allowedCommands, autoAcceptFileEdits) {
+function buildDOMObserverScript(customTexts, blockedCommands, allowedCommands, autoAcceptFileEdits, autoRetryEnabled) {
     blockedCommands = blockedCommands || [];
     allowedCommands = allowedCommands || [];
     if (autoAcceptFileEdits === undefined) autoAcceptFileEdits = true;
+    if (autoRetryEnabled === undefined) autoRetryEnabled = true;
 
     const allTexts = [
-        'run',  // Primary action button
-        ...(autoAcceptFileEdits ? ['accept'] : []),  // Only include 'accept' when file edits are enabled
+        'run',  // Botón de acción principal
+        ...(autoAcceptFileEdits ? ['accept'] : []),  // Solo incluir 'accept' si file edits está habilitado
         'always allow', 'allow this conversation', 'allow',
-        'retry', 'continue',
+        ...(autoRetryEnabled ? ['retry', 'continue'] : []),  // Solo incluir retry/continue si auto-retry está habilitado
         ...customTexts
     ];
     const expandTexts = ['requires input'];
@@ -84,6 +86,26 @@ function buildDOMObserverScript(customTexts, blockedCommands, allowedCommands, a
         var args = ['[AA]'];
         for (var i = 0; i < arguments.length; i++) args.push(arguments[i]);
         console.log.apply(console, args);
+    }
+
+    // ═══ DETECCIÓN DE CONTEXTO DE ERROR (fusión de antigravity-sync) ═══
+    // Camina hacia arriba 5 niveles del DOM buscando indicadores de error.
+    // Solo se usa para botones de retry/continue — evita clicks innecesarios.
+    function isErrorContext(element) {
+        var el = element;
+        for (var i = 0; i < 5 && el; i++) {
+            var text = el.textContent || '';
+            var className = (typeof el.className === 'string') ? el.className : '';
+            if (text.indexOf('error') !== -1 || text.indexOf('Error') !== -1 ||
+                text.indexOf('failed') !== -1 || text.indexOf('Failed') !== -1 ||
+                text.indexOf('terminated') !== -1 || text.indexOf('Agent terminated') !== -1 ||
+                text.indexOf('Dismiss') !== -1 ||
+                className.indexOf('error') !== -1 || className.indexOf('alert') !== -1) {
+                return true;
+            }
+            el = el.parentElement;
+        }
+        return false;
     }
 
     var COOLDOWN_MS = 5000;
@@ -428,6 +450,14 @@ function buildDOMObserverScript(customTexts, blockedCommands, allowedCommands, a
                 // click occurs (run/accept = error resolved).
                 var isRecovery = matchedText === 'retry' || matchedText === 'continue';
                 if (isRecovery) {
+                    // ═══ GUARDIA DE CONTEXTO DE ERROR (fusión de antigravity-sync) ═══
+                    // Solo clickear retry/continue si el botón está en un contexto de error.
+                    // Esto previene clicks accidentales en botones Retry que no son de error.
+                    if (!isErrorContext(btn)) {
+                        if (!window.__AA_DIAG) window.__AA_DIAG = [];
+                        if (window.__AA_DIAG.length < 50) window.__AA_DIAG.push({ action: 'SKIP_NO_ERROR_CTX', time: Date.now(), matched: matchedText, text: (btn.textContent || '').trim().substring(0, 40) });
+                        continue; // Re-escanear para encontrar el siguiente botón
+                    }
                     window.__AA_RECOVERY_TS = window.__AA_RECOVERY_TS || [];
                     var now = Date.now();
                     // Keep only timestamps from the last 60 seconds

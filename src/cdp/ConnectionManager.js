@@ -26,6 +26,7 @@ class ConnectionManager {
         this.blockedCommands = [];
         this.allowedCommands = [];
         this.autoAcceptFileEdits = true;
+        this.autoRetryEnabled = true;
 
         // Lifecycle
         this.isRunning = false;
@@ -64,13 +65,14 @@ class ConnectionManager {
             custom: this.getCustomTexts(),
             blocked: this.blockedCommands,
             allowed: this.allowedCommands,
-            fileEdits: this.autoAcceptFileEdits
+            fileEdits: this.autoAcceptFileEdits,
+            autoRetry: this.autoRetryEnabled
         });
         if (this._cachedScriptKey === key && this._cachedScript) {
             return this._cachedScript;
         }
         this._cachedScript = buildDOMObserverScript(
-            this.getCustomTexts(), this.blockedCommands, this.allowedCommands, this.autoAcceptFileEdits
+            this.getCustomTexts(), this.blockedCommands, this.allowedCommands, this.autoAcceptFileEdits, this.autoRetryEnabled
         );
         this._cachedScriptKey = key;
         // Push to worker if alive

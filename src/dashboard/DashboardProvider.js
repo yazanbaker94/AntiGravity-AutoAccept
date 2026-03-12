@@ -78,6 +78,7 @@ class DashboardProvider {
                 cdpConnected: status.cdpConnected,
                 sessionCount: status.sessionCount,
                 autoAcceptFileEdits: config.get('autoAcceptFileEdits', true),
+                autoRetryEnabled: config.get('autoRetryEnabled', true),
                 blockedCommands: config.get('blockedCommands', []),
                 allowedCommands: config.get('allowedCommands', []),
                 pollInterval: config.get('pollInterval', 500),
@@ -411,6 +412,16 @@ class DashboardProvider {
                 <span class="slider"></span>
             </label>
         </div>
+        <div class="toggle-row">
+            <div>
+                <div class="toggle-label">⚡ Auto-Retry on Errors</div>
+                <div class="toggle-desc">Automatically click Retry/Continue when agent fails (error context only)</div>
+            </div>
+            <label class="switch">
+                <input type="checkbox" id="chk-auto-retry" onchange="updateConfig('autoRetryEnabled', this.checked)">
+                <span class="slider"></span>
+            </label>
+        </div>
     </div>
 
     <div class="card">
@@ -524,6 +535,7 @@ class DashboardProvider {
 
         // Settings
         document.getElementById('chk-file-edits').checked = data.autoAcceptFileEdits;
+        document.getElementById('chk-auto-retry').checked = data.autoRetryEnabled;
 
         // Lists
         renderList('list-blocked', data.blockedCommands, 'removeBlocked');

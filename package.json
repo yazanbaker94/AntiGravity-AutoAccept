@@ -56,6 +56,12 @@
                     "scope": "window",
                     "description": "Auto-accept file edits (acceptAgentStep). Set to false to review diffs before accepting."
                 },
+                "autoAcceptV2.autoRetryEnabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "scope": "window",
+                    "description": "Auto-retry on errors. When enabled, automatically clicks Retry/Continue buttons when the agent encounters errors (failed, terminated, etc.)."
+                },
                 "autoAcceptV2.blockedCommands": {
                     "type": "array",
                     "default": [],
