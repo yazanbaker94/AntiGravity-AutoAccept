@@ -384,7 +384,8 @@ else { Write-Output "NOT_FOUND" }
 // ─── Activation ───────────────────────────────────────────────────────
 function activate(context) {
     outputChannel = vscode.window.createOutputChannel('AntiGravity AutoAccept');
-    log('Extension activating (v3.9.9)');
+    const extVersion = require('../package.json').version;
+    log(`Extension activating (v${extVersion})`);
     startMemoryLogger();
     log(`[MEM] Memory log: ${MEM_LOG_PATH}`);
 
