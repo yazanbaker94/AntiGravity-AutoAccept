@@ -3,7 +3,7 @@
 
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/yazanbaker)
 
-> **📢 Sponsor this extension** — With **10,000+ installs** and an active user base, your brand gets prime placement on every user's dashboard. Reach developers who automate their workflows daily. Contact **yazanbaker@gmail.com** to get started.
+> **📢 Sponsor this extension** — With **10,000+ installs** and an active user base, your brand gets prime placement on every user's dashboard. Reach developers who automate their workflows daily. Contact **autoaccept@sakinahtime.com** to get started.
 
 Automatically accept agent steps, terminal commands, file edits, and permission prompts in [Antigravity](https://antigravity.dev) — Google's AI coding assistant.
 
