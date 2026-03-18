@@ -5,7 +5,7 @@
 
 const vscode = require('vscode');
 
-const WORKER_URL = 'https://aa-telemetry.yazanbaker.workers.dev';
+const WORKER_URL = 'https://telemetry.sakinahtime.com';
 const DAY_MS = 86400000;
 
 /**
