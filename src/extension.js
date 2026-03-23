@@ -210,13 +210,16 @@ function startPolling() {
             return;
         }
 
-        // Fix #48 + #46: CDP Mutex — if Channel 2 is connected, stop the blind-polling sledgehammer.
-        // Channel 1 fires generic commands that steal focus, collapse context menus, and cause flickering.
-        // When CDP has active sessions, Channel 2's MutationObserver handles everything.
+        // Fix #48 + #46: CDP Mutex — suppress antigravity.agent.acceptAgentStep (causes
+        // focus stealing / sidebar flickering) but keep TERMINAL_COMMANDS active.
+        // TERMINAL_COMMANDS includes antigravity.command.accept which is the generic
+        // acceptor that handles the Run button in the agent chat UI.
         const isCdpActive = connectionManager && connectionManager.sessions.size > 0;
         if (isCdpActive) {
-            // Keep the loop alive slowly to detect CDP disconnects, but do NOT fire commands
-            pollIntervalId = setTimeout(pollCycle, 2000);
+            if (isEnabled && !cachedHasFilters) {
+                Promise.allSettled(TERMINAL_COMMANDS.map(cmd => vscode.commands.executeCommand(cmd))).catch(() => {});
+            }
+            pollIntervalId = setTimeout(pollCycle, interval);
             return;
         }
 
@@ -453,11 +456,14 @@ function activate(context) {
             }
             isDateInitialized = true;
         }
+
+        // Refresh dashboard counter on every heartbeat (not just milestones)
+        if (dashboardProvider) dashboardProvider.refresh();
+
         // Milestone detection — descending order catches highest milestone on leaps
         for (let i = MILESTONES.length - 1; i >= 0; i--) {
             const m = MILESTONES[i];
             if (prevTotal < m && newTotal >= m) {
-                if (dashboardProvider) dashboardProvider.refresh();
                 const rank = MILESTONE_RANKS[m] || '';
                 const minsSaved = Math.round((newTotal * SECONDS_SAVED_PER_CLICK) / 60);
                 const dollarsSaved = minsSaved; // $1/min conservative
@@ -482,6 +488,7 @@ function activate(context) {
             }
         }
     };
+
 
     // Cross-machine sync: persist analytics across VS Code environments
     context.globalState.setKeysForSync([

@@ -24,7 +24,7 @@ function buildDOMObserverScript(customTexts, blockedCommands, allowedCommands, a
         ...(autoRetryEnabled ? ['retry', 'continue'] : []),  // PR #41: zero-overhead toggle
         ...customTexts
     ];
-    const expandTexts = ['requires input'];
+    const expandTexts = ['requires input', 'expand'];
 
     return `
 (function() {
@@ -88,7 +88,7 @@ function buildDOMObserverScript(customTexts, blockedCommands, allowedCommands, a
     }
 
     var COOLDOWN_MS = 5000;
-    var EXPAND_COOLDOWN_MS = 30000; // 30s cooldown for expand buttons (DOM-path-keyed, so new positions fire instantly)
+    var EXPAND_COOLDOWN_MS = 10000; // 10s cooldown for expand buttons (safe: context + state guards prevent loops)
     var clickCooldowns = {};
 
     // Lightweight DOM path: walks up to 3 ancestors to create a structurally unique key.
@@ -186,19 +186,44 @@ function buildDOMObserverScript(customTexts, blockedCommands, allowedCommands, a
                 // Skip keywords lower priority than current best
                 if (best !== null && t >= best.priority) break;
                 var text = texts[t];
-                // Expand keywords: exact match ONLY to prevent toggle loops
-                // ('Expand all' → click → 'Collapse all' → mutation → 'Expand all' → click → ∞)
                 var isExpandKeyword = (text === 'expand' || text === 'requires input');
-                var isMatch;
+                var isMatch = false;
+
                 if (isExpandKeyword) {
-                    isMatch = nodeText === text;
+                    if (text === 'expand') {
+                        // Strip non-alpha chars so "expand <", "expand ›" etc. match
+                        // but "expand all" → "expandall" does NOT match
+                        isMatch = nodeText.replace(/[^a-z]/g, '') === 'expand';
+                        if (isMatch) {
+                            // BOTTOM-UP CONTEXT SCAN: only click 'expand' if a parent
+                            // container also contains 'requires input' text.
+                            // Prevents Issue #30 loops with generic preview expands.
+                            var hasContext = false;
+                            var p = wNode;
+                            for (var up = 0; up < 6 && p && p !== document.body; up++) {
+                                p = p.parentElement;
+                                if (p && (p.textContent || '').toLowerCase().indexOf('requires input') !== -1) {
+                                    hasContext = true;
+                                    break;
+                                }
+                            }
+                            isMatch = hasContext;
+                            if (!hasContext) {
+                                if (!window.__AA_DIAG) window.__AA_DIAG = [];
+                                if (window.__AA_DIAG.length < 50) window.__AA_DIAG.push({ action: 'SKIP_EXPAND_NO_CTX', tag: (wNode.tagName || '').toLowerCase() });
+                            }
+                        }
+                    } else if (text === 'requires input') {
+                        // Relaxed match: container text like '1 step requires input' now matches
+                        isMatch = nodeText.indexOf('requires input') !== -1 && nodeText.length <= 80;
+                    }
                 } else {
                     isMatch = nodeText === text ||
-                        (text.length >= 5 && nodeText.startsWith(text) && isWordBoundary(nodeText, text.length) && nodeText.length <= text.length * 3) ||
+                        (text.length >= 3 && nodeText.startsWith(text) && isWordBoundary(nodeText, text.length) && nodeText.length <= text.length * 3) ||
                         (nodeText.startsWith(text + ' ') && nodeText.length <= text.length * 5) ||
                         // Keyboard shortcut suffix: Antigravity renders "AcceptAlt+⏎" with no space.
                         // The word boundary check fails because 'a' (from 'alt') is a word char.
-                        (text.length >= 5 && nodeText.startsWith(text) && nodeText.length <= text.length * 5 &&
+                        (text.length >= 3 && nodeText.startsWith(text) && nodeText.length <= text.length * 5 &&
                             /^(alt|ctrl|shift|cmd|meta|⌘|⌥|⇧|⌃)/.test(nodeText.substring(text.length)));
                 }
                 if (!isMatch) continue;
@@ -217,6 +242,20 @@ function buildDOMObserverScript(customTexts, blockedCommands, allowedCommands, a
                         if (!window.__AA_DIAG) window.__AA_DIAG = [];
                         if (window.__AA_DIAG.length < 50) window.__AA_DIAG.push({ action: 'SKIP_DISABLED', matched: text, text: nodeText.substring(0, 40), tag: tag2 });
                         continue;
+                    }
+
+                    // STATE GUARD: Prevents infinite toggle loops on expand buttons.
+                    // If the button/section is already expanded, refuse to click it.
+                    if (isExpandKeyword) {
+                        var isAlreadyExpanded =
+                            clickable.getAttribute('aria-expanded') === 'true' ||
+                            clickable.getAttribute('data-state') === 'open' ||
+                            clickable.getAttribute('data-state') === 'expanded';
+                        if (isAlreadyExpanded) {
+                            if (!window.__AA_DIAG) window.__AA_DIAG = [];
+                            if (window.__AA_DIAG.length < 50) window.__AA_DIAG.push({ action: 'SKIP_ALREADY_EXPANDED', matched: text });
+                            continue;
+                        }
                     }
 
                     // Cooldown guard: DOM-path + text key, with longer cooldown for expand buttons

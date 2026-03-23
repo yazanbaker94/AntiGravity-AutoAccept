@@ -4,6 +4,14 @@
 // WebSocket instances, making it immune to the "Cannot freeze array
 // buffer views with elements" crash (issue #36).
 // Memory-optimized: ~2-5MB per worker thread vs ~30-50MB per fork().
+//
+// Fixed in this revision (Issue #51):
+//   RC1  — Harvest __AA_CLICK_COUNT before pruning gone sessions
+//   RC2  — ignoredTargets parallel TTL map (5-min self-healing expiry)
+//   HB1  — IPC backpressure death spiral: chunk all concurrent evals to ≤10
+//   HB2  — Destructive read race: switch to monotonic counter + delta
+//   HB3  — Undead session loop: only clear fail count on live or successful re-inject
+//   SEC  — Removed dead 'not-agent-panel' branch (DOMObserver never returns it)
 
 const http = require('http');
 const path = require('path');
@@ -20,6 +28,8 @@ class ConnectionManager {
         this.sessions = new Map();          // targetId → { url, wsUrl }
         this.sessionUrls = new Map();       // targetId → url (compat)
         this.ignoredTargets = new Set();
+        this._ignoredTargetTTLs = new Map(); // [RC2] targetId → expiryTimestamp
+        this._sessionCursors = new Map();    // [HB2] targetId → last seen __AA_CLICK_COUNT
         this.activeCdpPort = null;
 
         // Command filters
@@ -48,7 +58,7 @@ class ConnectionManager {
 
         // Script caching (eliminates 28KB IPC churn per heartbeat)
         this._cachedScript = null;
-        this._cachedScriptKey = null; // hash of inputs to detect changes
+        this._cachedScriptKey = null;
 
         // Compat shim
         this._connected = false;
@@ -137,7 +147,8 @@ class ConnectionManager {
         return this._worker;
     }
 
-    _workerEval(wsUrl, expression) {
+    // [HB1/RC1] timeoutMs parameter allows callers to set fast-fail for dying targets
+    _workerEval(wsUrl, expression, timeoutMs = 10000) {
         return new Promise((resolve, reject) => {
             if (this._pendingIpc.size > 20) {
                 reject(new Error('ipc backpressure: too many pending calls'));
@@ -148,7 +159,7 @@ class ConnectionManager {
             const timer = setTimeout(() => {
                 this._pendingIpc.delete(id);
                 reject(new Error('ipc timeout'));
-            }, 10000);
+            }, timeoutMs);
             this._pendingIpc.set(id, { resolve, reject, timer });
             worker.postMessage({ type: 'eval', id, wsUrl, expression });
         });
@@ -231,8 +242,7 @@ class ConnectionManager {
         const script = this._getScript();
         for (const [targetId, info] of this.sessions) {
             try {
-                const msg = await this._workerBurstInject(info.wsUrl, targetId, this.isPaused);
-                const result = msg.result || 'unknown';
+                const result = await this._workerBurstInject(info.wsUrl, targetId, this.isPaused) || 'unknown';
                 this.log(`[CDP] Re-injected [${targetId.substring(0, 6)}] → ${result}`);
             } catch (e) {
                 this.log(`[CDP] Reinject failed for ${targetId.substring(0, 6)}: ${e.message}`);
@@ -285,6 +295,8 @@ class ConnectionManager {
         this.sessions.clear();
         this.sessionUrls.clear();
         this.ignoredTargets.clear();
+        this._ignoredTargetTTLs.clear(); // [RC2]
+        this._sessionCursors.clear();    // [HB2]
         this._sessionFailCounts.clear();
         this._injectionFailCounts.clear();
         this._connected = false;
@@ -321,7 +333,10 @@ class ConnectionManager {
             // Pre-cache script before injecting
             this._getScript();
 
-            await Promise.allSettled(candidates.map(t => this._handleNewTarget(t)));
+            // [HB1] Chunk injections to stay under IPC backpressure limit (20)
+            for (let i = 0; i < candidates.length; i += 5) {
+                await Promise.allSettled(candidates.slice(i, i + 5).map(t => this._handleNewTarget(t)));
+            }
 
             this.log(`[CDP] ${this.sessions.size} sessions active after initial scan`);
             this._scheduleHeartbeat();
@@ -357,6 +372,7 @@ class ConnectionManager {
             for (const [existingTid, info] of this.sessions) {
                 if (info.url && info.url === url) {
                     this.ignoredTargets.add(targetId);
+                    this._ignoredTargetTTLs.set(targetId, Date.now() + 5 * 60 * 1000); // [RC2]
                     return;
                 }
             }
@@ -365,24 +381,42 @@ class ConnectionManager {
         try {
             // Use cached script — no 28KB allocation per target
             this._getScript();
-            const msg = await this._workerBurstInject(webSocketDebuggerUrl, targetId, this.isPaused);
-            const result = msg.result || 'unknown';
+            // [FIX] IPC string unboxing: _workerBurstInject resolves a raw string, not {result:...}
+            const result = await this._workerBurstInject(webSocketDebuggerUrl, targetId, this.isPaused) || 'unknown';
 
             if (result !== 'observer-installed' && result !== 'already-active') {
                 this.log(`[CDP] [${shortId}] Injection result: ${result}`);
-                if (result === 'not-agent-panel' || result === 'no-window') {
+                // [SEC] Removed dead 'not-agent-panel' branch — DOMObserver never returns it.
+                // Only 'no-window' and repeated failures are grounds for ignoring a target.
+                if (result === 'no-window') {
                     this.ignoredTargets.add(targetId);
+                    this._ignoredTargetTTLs.set(targetId, Date.now() + 5 * 60 * 1000); // [RC2]
                 } else {
                     const count = (this._injectionFailCounts.get(targetId) || 0) + 1;
                     this._injectionFailCounts.set(targetId, count);
-                    if (count >= 3) this.ignoredTargets.add(targetId);
+                    if (count >= 3) {
+                        this.ignoredTargets.add(targetId);
+                        this._ignoredTargetTTLs.set(targetId, Date.now() + 5 * 60 * 1000); // [RC2]
+                    }
                 }
                 return;
             }
 
             this.sessions.set(targetId, { url: url || '', wsUrl: webSocketDebuggerUrl });
             this.sessionUrls.set(targetId, url || '');
-            this.log(`[CDP] ✓ Injected [${shortId}] → ${result} (${(url || '').substring(0, 50)})`);
+
+            // [Q3 FIX] Harvest current __AA_CLICK_COUNT BEFORE setting cursor.
+            // DOMObserver preserves the counter across re-injections. If we initialize
+            // to 0, the first heartbeat computes delta = 658 - 0 = 658, double-counting
+            // all pre-reload clicks. Read the actual value and use it as the baseline.
+            let initialCount = 0;
+            try {
+                const initCheck = await this._workerEval(webSocketDebuggerUrl, '(() => window.__AA_CLICK_COUNT || 0)()', 1500);
+                initialCount = initCheck.result?.result?.value || 0;
+            } catch (e) { /* best-effort — 0 is safe fallback */ }
+            this._sessionCursors.set(targetId, initialCount);
+
+            this.log(`[CDP] ✓ Injected [${shortId}] → ${result} cursor=${initialCount} (${(url || '').substring(0, 50)})`);
         } catch (e) {
             this.log(`[CDP] [${shortId}] Inject error: ${e.message}`);
         }
@@ -427,23 +461,68 @@ class ConnectionManager {
             );
             if (candidates.length > 0) {
                 this.log(`[CDP] ${candidates.length} new targets found, injecting...`);
-                await Promise.allSettled(candidates.map(t => this._handleNewTarget(t)));
-            }
-
-            // Prune gone targets
-            const activeIds = new Set(targets.map(t => t.id));
-            for (const [targetId] of this.sessions) {
-                if (!activeIds.has(targetId)) {
-                    this.sessions.delete(targetId);
-                    this.sessionUrls.delete(targetId);
-                    this._sessionFailCounts.delete(targetId);
-                    this.log(`[CDP] Target [${targetId.substring(0, 6)}] gone, pruned`);
+                // [HB1] Chunk to avoid backpressure
+                for (let i = 0; i < candidates.length; i += 5) {
+                    await Promise.allSettled(candidates.slice(i, i + 5).map(t => this._handleNewTarget(t)));
                 }
             }
 
-            // Prune ignoredTargets of dead target IDs
+            const activeIds = new Set(targets.map(t => t.id));
+
+            // ── RC1: PRE-PRUNE HARVEST ─────────────────────────────────────
+            // Identify targets about to be pruned, harvest their click counts
+            // BEFORE removing them so no clicks are lost on transient flickers.
+            const toPrune = [];
+            for (const [targetId] of this.sessions) {
+                if (!activeIds.has(targetId)) toPrune.push(targetId);
+            }
+
+            if (toPrune.length > 0) {
+                // [HB2] Non-destructive read — we harvest the current value without resetting
+                const harvestExpr = '(() => { return window.__AA_CLICK_COUNT || 0; })()';
+                // [HB1] Chunk prune harvests; [RC1] use 1500ms fast-fail since target is leaving
+                for (let i = 0; i < toPrune.length; i += 5) {
+                    await Promise.allSettled(toPrune.slice(i, i + 5).map(async (targetId) => {
+                        const info = this.sessions.get(targetId);
+                        if (info) {
+                            try {
+                                const r = await this._workerEval(info.wsUrl, harvestExpr, 1500);
+                                const currentCount = r.result?.result?.value || 0;
+                                const lastCount = this._sessionCursors.get(targetId) || 0;
+                                // Monotonic delta: if page reloaded __AA_CLICK_COUNT may be < lastCount
+                                const delta = (currentCount < lastCount) ? currentCount : (currentCount - lastCount);
+                                if (this.onClickTelemetry && delta > 0) {
+                                    this.log(`[CDP] Pre-prune harvest [${targetId.substring(0, 6)}]: +${delta} clicks`);
+                                    this.onClickTelemetry(delta);
+                                }
+                            } catch (e) { /* target already gone — suppress, best-effort */ }
+                        }
+                        this.sessions.delete(targetId);
+                        this.sessionUrls.delete(targetId);
+                        this._sessionFailCounts.delete(targetId);
+                        this._sessionCursors.delete(targetId); // [HB2]
+                        this.log(`[CDP] Target [${targetId.substring(0, 6)}] gone, pruned`);
+                    }));
+                }
+            }
+
+            // ── RC2: IGNORED TARGETS TTL EXPIRY ───────────────────────────
+            // Dead target IDs: remove immediately.
+            // Live ignored targets: remove after their TTL so transient race
+            // conditions (e.g. unhydrated React DOM returning 'no-window' on a
+            // valid agent panel) get a self-healing retry window.
+            const now = Date.now();
             for (const tid of this.ignoredTargets) {
-                if (!activeIds.has(tid)) this.ignoredTargets.delete(tid);
+                if (!activeIds.has(tid)) {
+                    // Target no longer exists — clean up
+                    this.ignoredTargets.delete(tid);
+                    this._ignoredTargetTTLs.delete(tid);
+                } else if (this._ignoredTargetTTLs.has(tid) && now > this._ignoredTargetTTLs.get(tid)) {
+                    // TTL expired — allow re-discovery on next heartbeat
+                    this.ignoredTargets.delete(tid);
+                    this._ignoredTargetTTLs.delete(tid);
+                    this.log(`[CDP] ignoredTargets: TTL expired for [${tid.substring(0, 6)}], will retry`);
+                }
             }
 
             // Prune _injectionFailCounts of dead target IDs
@@ -458,16 +537,27 @@ class ConnectionManager {
                 return;
             }
 
+            // ── HB1 + HB2: CHUNKED EVAL + MONOTONIC COUNTER ───────────────
             const entries = [...this.sessions.entries()];
-            const results = await Promise.allSettled(
-                entries.map(async ([targetId, info]) => {
-                    const check = await this._workerEval(info.wsUrl,
-                        '(() => { const c = window.__AA_CLICK_COUNT || 0; window.__AA_CLICK_COUNT = 0; const d = window.__AA_DIAG || []; window.__AA_DIAG = []; return { alive: !!window.__AA_PAUSED || (!!window.__AA_OBSERVER_ACTIVE && (Date.now() - (window.__AA_LAST_SCAN || 0)) < 120000), clickCount: c, diag: d }; })()'
-                    );
-                    const health = check.result?.result?.value || { alive: false, clickCount: 0, diag: null };
-                    return { targetId, alive: health.alive, clickCount: health.clickCount, diag: health.diag };
-                })
-            );
+            const results = [];
+
+            // Chunk at 10 to keep IPC queue comfortably under the 20-slot limit
+            for (let i = 0; i < entries.length; i += 10) {
+                const chunk = entries.slice(i, i + 10);
+                const chunkResults = await Promise.allSettled(
+                    chunk.map(async ([targetId, info]) => {
+                        // [HB2] Non-destructive read: removed `window.__AA_CLICK_COUNT = 0`.
+                        // If the CDP WebSocket drops the response, the counter is NOT reset,
+                        // so clicks are never lost to a network blip.
+                        const check = await this._workerEval(info.wsUrl,
+                            '(() => { const c = window.__AA_CLICK_COUNT || 0; const d = window.__AA_DIAG || []; window.__AA_DIAG = []; return { alive: !!window.__AA_PAUSED || (!!window.__AA_OBSERVER_ACTIVE && (Date.now() - (window.__AA_LAST_SCAN || 0)) < 120000), clickCount: c, diag: d }; })()'
+                        );
+                        const health = check.result?.result?.value || { alive: false, clickCount: 0, diag: null };
+                        return { targetId, alive: health.alive, clickCount: health.clickCount, diag: health.diag };
+                    })
+                );
+                results.push(...chunkResults);
+            }
 
             const dead = [];
             for (let i = 0; i < results.length; i++) {
@@ -477,8 +567,15 @@ class ConnectionManager {
                 const shortId = targetId.substring(0, 6);
 
                 if (status === 'fulfilled') {
-                    this._sessionFailCounts.delete(targetId);
-                    if (this.onClickTelemetry && value.clickCount > 0) this.onClickTelemetry(value.clickCount);
+                    // [HB2] Monotonic delta: compute new clicks since last heartbeat
+                    const lastCount = this._sessionCursors.get(targetId) || 0;
+                    const delta = (value.clickCount < lastCount) ? value.clickCount : (value.clickCount - lastCount);
+                    if (this.onClickTelemetry && delta > 0) this.onClickTelemetry(delta);
+                    this._sessionCursors.set(targetId, value.clickCount);
+
+                    // [HB3] Removed unconditional this._sessionFailCounts.delete(targetId) here.
+                    // Fail count is only cleared below if the target is confirmed alive
+                    // or re-injection succeeds — prevents infinite undead session loop.
 
                     if (value.diag && Array.isArray(value.diag) && value.diag.length > 0) {
                         for (const d of value.diag) {
@@ -493,23 +590,25 @@ class ConnectionManager {
                         this.log(`[CDP] Session [${shortId}] observer dead, re-injecting...`);
                         try {
                             this._getScript(); // Ensure cache is fresh
-                            const msg = await this._workerBurstInject(info.wsUrl, targetId, this.isPaused);
-                            const result = msg.result || 'unknown';
-                            if (result === 'not-agent-panel') {
-                                dead.push(targetId); this.ignoredTargets.add(targetId);
-                            } else if (result !== 'observer-installed' && result !== 'already-active') {
+                            // [FIX] IPC string unboxing: _workerBurstInject resolves a raw string
+                            const result = await this._workerBurstInject(info.wsUrl, targetId, this.isPaused) || 'unknown';
+                            if (result === 'observer-installed' || result === 'already-active') {
+                                // [HB3] Only clear fail count on successful resurrection
+                                this._sessionFailCounts.delete(targetId);
+                                this.log(`[CDP] ✓ Re-injected [${shortId}] → ${result}`);
+                            } else {
                                 const fc = (this._sessionFailCounts.get(targetId) || 0) + 1;
                                 this._sessionFailCounts.set(targetId, fc);
                                 if (fc >= 3) dead.push(targetId);
-                            } else {
-                                this._sessionFailCounts.delete(targetId);
-                                this.log(`[CDP] ✓ Re-injected [${shortId}] → ${result}`);
                             }
                         } catch (e) {
                             const fc = (this._sessionFailCounts.get(targetId) || 0) + 1;
                             this._sessionFailCounts.set(targetId, fc);
                             if (fc >= 3) dead.push(targetId);
                         }
+                    } else {
+                        // [HB3] Observer confirmed alive — clear any accumulated strikes
+                        this._sessionFailCounts.delete(targetId);
                     }
                 } else {
                     const fc = (this._sessionFailCounts.get(targetId) || 0) + 1;
@@ -522,6 +621,7 @@ class ConnectionManager {
                 this.sessions.delete(tid);
                 this.sessionUrls.delete(tid);
                 this._sessionFailCounts.delete(tid);
+                this._sessionCursors.delete(tid); // [HB2]
             }
 
             this._resetIdleTimer();
