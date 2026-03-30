@@ -1,5 +1,5 @@
 # AntiGravity AutoAccept
-<!-- v3.8.2 browser subagent compatibility -->
+<!-- v3.13.8 safety presets + bulk blocked commands -->
 
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/yazanbaker)
 
@@ -179,6 +179,78 @@ Inside the agent panel, a `TreeWalker` searches for buttons by text content usin
 
 ### Command Filtering (v3.1.0)
 Blocked and allowed command lists use **word-boundary matching** against the code block above a Run button. For example, blocking `rm` will block `rm -rf /tmp` but NOT `yarn format` or `npm run build`.
+
+### Recommended Blocked Commands
+
+The dashboard includes a **🛡 Load Safety Presets** button that bulk-imports 50+ destructive command patterns covering filesystem wipers, disk formatters, database drops, force-pushes, and fork bombs.
+
+**One-click:** Open the Dashboard (`📊` in status bar) → click **🛡 Load Recommended Safety Presets**.
+
+**Bulk paste:** The blocked/allowed inputs now support **comma-separated** values — paste a list and hit Enter.
+
+<details>
+<summary><b>📋 Manual: Copy to settings.json</b></summary>
+
+Add this to your `settings.json` (`Ctrl+Shift+P` → `Preferences: Open User Settings (JSON)`):
+
+```json
+"autoAcceptV2.blockedCommands": [
+  "rm -rf /",
+  "rm -rf /*",
+  "rm -rf ~",
+  "rm -rf .*",
+  "rm -rf .git",
+  "rmdir /s /q c:\\",
+  "rmdir /s /q d:\\",
+  "rd /s /q c:\\",
+  "rd /s /q d:\\",
+  "del /f /s /q c:\\",
+  "del /f /s /q d:\\",
+  "remove-item -recurse -force c:\\",
+  "remove-item -recurse -force d:\\",
+  "format c:",
+  "format d:",
+  "diskpart",
+  "clear-disk",
+  "format-volume",
+  "remove-partition",
+  "initialize-disk",
+  "dd if=/dev/zero",
+  "dd if=/dev/urandom",
+  "dd if=/dev/random",
+  "mkfs.",
+  "wipefs",
+  "shred ",
+  "vssadmin delete shadows",
+  "reg delete hk",
+  "chmod -r 777 /",
+  "chown -r root /",
+  "sudo su",
+  "su -",
+  "| bash",
+  "| sh",
+  "| zsh",
+  "| pwsh",
+  "invoke-expression",
+  "iex (",
+  "set-executionpolicy bypass",
+  "drop database",
+  "drop table",
+  "truncate table",
+  "db.dropdatabase()",
+  "docker system prune -a --volumes",
+  "docker volume prune",
+  "docker volume rm",
+  "git push --force",
+  "git push -f",
+  "git clean -fdx",
+  ":(){ :|:& };:",
+  "shutdown ",
+  "stop-computer"
+]
+```
+
+</details>
 
 ### CDP Auto-Fix
 On activation, the extension checks if port 9333 is open (with 9222 fallback). If not, it shows a notification with:

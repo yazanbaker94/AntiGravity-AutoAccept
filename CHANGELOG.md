@@ -1,5 +1,17 @@
 # Changelog
 
+## [3.13.8] — 2026-03-31
+
+### Safety Presets & Bulk Blocked Commands
+
+- **Added** "🛡 Load Recommended Safety Presets" button to the dashboard — one-click imports 52 destructive command patterns (filesystem wipers, disk formatters, database drops, force-pushes, fork bombs, pipe-to-shell, etc.).
+- **Added** bulk paste support for blocked/allowed command inputs — comma-separated values are split and added individually.
+- **Added** `addBlockedBulk` message handler in `DashboardProvider.js` for efficient multi-item imports with deduplication.
+- **Added** "Recommended Blocked Commands" section to README with three import methods: dashboard button, comma-separated paste, and `settings.json` copy-paste snippet.
+- **Fixed** template literal double-escape bug — `SAFETY_PRESETS` array inside the `_getHtml()` backtick string had backslashes that were consumed by template evaluation, producing unterminated JS strings in the webview. Fixed by using 4-char escape sequences (`\\\\`) to survive the template→browser double-interpretation chain.
+
+---
+
 ## [3.13.6] — 2026-03-23
 
 ### Fix — Run Button Not Clicked (Missing `antigravity.command.accept`)

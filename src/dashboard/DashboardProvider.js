@@ -155,6 +155,16 @@ class DashboardProvider {
                 this._pushState();
                 break;
             }
+            case 'addBlockedBulk': {
+                const list = [...config.get('blockedCommands', [])];
+                const items = (msg.values || []).filter(v => v && !list.includes(v));
+                if (items.length) {
+                    list.push(...items);
+                    await config.update('blockedCommands', list, _target('blockedCommands'));
+                }
+                this._pushState();
+                break;
+            }
             case 'removeBlocked': {
                 const list = config.get('blockedCommands', []).filter(c => c !== msg.value);
                 await config.update('blockedCommands', list, _target('blockedCommands'));
@@ -473,9 +483,10 @@ class DashboardProvider {
         <div class="toggle-desc" style="margin-bottom:8px">Commands matching these patterns will NEVER be auto-run</div>
         <div class="list-editor">
             <div class="list-input">
-                <input id="input-blocked" placeholder="e.g. rm -rf, git push --force" onkeydown="if(event.key==='Enter')addBlocked()">
+                <input id="input-blocked" placeholder="e.g. rm -rf, git push --force (comma-separated for bulk)" onkeydown="if(event.key==='Enter')addBlocked()">
                 <button onclick="addBlocked()">+ Add</button>
             </div>
+            <button class="btn" id="btn-load-presets" style="width:100%;margin-bottom:8px;background:var(--warning);color:#000;font-weight:600" onclick="loadSafetyPresets()">&#128737; Load Recommended Safety Presets</button>
             <div id="list-blocked"></div>
         </div>
     </div>
@@ -528,10 +539,47 @@ class DashboardProvider {
 
     function addBlocked() {
         const input = document.getElementById('input-blocked');
-        if (input.value.trim()) {
-            vscode.postMessage({ type: 'addBlocked', value: input.value.trim() });
-            input.value = '';
+        const raw = input.value.trim();
+        if (!raw) return;
+        // Support comma-separated bulk paste
+        const parts = raw.split(',').map(s => s.trim()).filter(Boolean);
+        if (parts.length > 1) {
+            vscode.postMessage({ type: 'addBlockedBulk', values: parts });
+        } else {
+            vscode.postMessage({ type: 'addBlocked', value: raw });
         }
+        input.value = '';
+    }
+
+    const SAFETY_PRESETS = [
+        "rm -rf /","rm -rf /*","rm -rf ~","rm -rf .*","rm -rf .git",
+        "rmdir /s /q c:\\\\","rmdir /s /q d:\\\\","rd /s /q c:\\\\","rd /s /q d:\\\\",
+        "del /f /s /q c:\\\\","del /f /s /q d:\\\\",
+        "remove-item -recurse -force c:\\\\","remove-item -recurse -force d:\\\\",
+        "format c:","format d:","diskpart","clear-disk","format-volume",
+        "remove-partition","initialize-disk",
+        "dd if=/dev/zero","dd if=/dev/urandom","dd if=/dev/random",
+        "mkfs.","wipefs","shred ","vssadmin delete shadows","reg delete hk",
+        "chmod -r 777 /","chown -r root /","sudo su","su -",
+        "| bash","| sh","| zsh","| pwsh",
+        "invoke-expression","iex (","set-executionpolicy bypass",
+        "drop database","drop table","truncate table","db.dropdatabase()",
+        "docker system prune -a --volumes","docker volume prune","docker volume rm",
+        "git push --force","git push -f","git clean -fdx",
+        ":(){ :|:& };:","shutdown ","stop-computer"
+    ];
+
+    function loadSafetyPresets() {
+        vscode.postMessage({ type: 'addBlockedBulk', values: SAFETY_PRESETS });
+        const btn = document.getElementById('btn-load-presets');
+        btn.textContent = '\u2705 Loaded ' + SAFETY_PRESETS.length + ' presets!';
+        btn.style.background = 'var(--success)';
+        btn.style.color = '#fff';
+        setTimeout(() => {
+            btn.textContent = '\uD83D\uDEE1 Load Recommended Safety Presets';
+            btn.style.background = 'var(--warning)';
+            btn.style.color = '#000';
+        }, 3000);
     }
 
     function removeBlocked(val) {
