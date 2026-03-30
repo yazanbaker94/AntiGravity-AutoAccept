@@ -362,15 +362,17 @@ class ConnectionManager {
     }
 
     async _handleNewTarget(targetInfo) {
-        const { id: targetId, webSocketDebuggerUrl, type, url } = targetInfo;
+        const { id: targetId, webSocketDebuggerUrl, type, url, title } = targetInfo;
         if (!targetId || !webSocketDebuggerUrl) return;
         const shortId = targetId.substring(0, 6);
         if (this.sessions.has(targetId) || this.ignoredTargets.has(targetId)) return;
 
-        // URL dedup
+        // Some Antigravity surfaces share the same underlying URL while rendering
+        // different agent views (for example "Manager" and "Launchpad"). Only
+        // suppress targets that duplicate both URL and title.
         if (url) {
             for (const [existingTid, info] of this.sessions) {
-                if (info.url && info.url === url) {
+                if (info.url && info.url === url && (info.title || '') === (title || '')) {
                     this.ignoredTargets.add(targetId);
                     this._ignoredTargetTTLs.set(targetId, Date.now() + 5 * 60 * 1000); // [RC2]
                     return;
@@ -402,7 +404,7 @@ class ConnectionManager {
                 return;
             }
 
-            this.sessions.set(targetId, { url: url || '', wsUrl: webSocketDebuggerUrl });
+            this.sessions.set(targetId, { url: url || '', title: title || '', wsUrl: webSocketDebuggerUrl });
             this.sessionUrls.set(targetId, url || '');
 
             // [Q3 FIX] Harvest current __AA_CLICK_COUNT BEFORE setting cursor.
