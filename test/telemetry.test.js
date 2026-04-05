@@ -171,17 +171,17 @@ console.log('\n\x1b[1m--- Dollar Calculation ---\x1b[0m');
 
 test('10m saved → ~$10', () => {
     const mins = 10;
-    eq('~$' + mins.toLocaleString() + ' value', '~$10 value');
+    eq('~$' + mins.toLocaleString('en-US') + ' value', '~$10 value');
 });
 
 test('500m saved → ~$500', () => {
     const mins = 500;
-    eq('~$' + mins.toLocaleString() + ' value', '~$500 value');
+    eq('~$' + mins.toLocaleString('en-US') + ' value', '~$500 value');
 });
 
 test('2500m saved → ~$2,500', () => {
     const mins = 2500;
-    eq('~$' + mins.toLocaleString() + ' value', '~$2,500 value');
+    eq('~$' + mins.toLocaleString('en-US') + ' value', '~$2,500 value');
 });
 
 // ═════════════════════════════════════════════════════════════════════

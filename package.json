@@ -85,7 +85,7 @@
     },
     "scripts": {
         "package": "npx -y @vscode/vsce package",
-        "test": "echo \"Error: no test specified\" && exit 1"
+        "test": "node test/telemetry.test.js && node test/permission-engine.test.js && node test/connection-manager.test.js"
     },
     "repository": {
         "type": "git",

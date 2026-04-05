@@ -252,9 +252,9 @@ Add this to your `settings.json` (`Ctrl+Shift+P` → `Preferences: Open User Set
 
 </details>
 
-### CDP Auto-Fix
+### CDP Auto-Fix (Zero-Config)
 On activation, the extension checks if port 9333 is open (with 9222 fallback). If not, it shows a notification with:
-- **Auto-Fix Shortcut (Windows)** — patches `.lnk` shortcuts on Desktop, Start Menu, **and Taskbar**
+- **Auto-Fix Shortcut (Windows)** — instantly and automatically patches `.lnk` shortcuts on Desktop, Start Menu, **and Taskbar** using a fully native, fileless PowerShell payload. No external scripts to maintain, bypasses restrictive execution policies automatically.
 - **Manual Guide** — links to this README
 
 ## Troubleshooting

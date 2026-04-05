@@ -313,11 +313,34 @@ async function checkAndFixCDP() {
     log(`[CDP] ⚠ Port ${configPort} refused — remote debugging not enabled`);
     vscode.window.showErrorMessage(
         `⚡ AutoAccept needs Debug Mode (Port ${configPort}). Please apply the fix or update your shortcut.`,
-        'Auto-Fix Shortcut (Windows)',
+        'Auto-Fix & Restart',
         'Manual Guide'
-    ).then(action => {
-        if (action === 'Auto-Fix Shortcut (Windows)') applyPermanentWindowsPatch(configPort);
-        else if (action === 'Manual Guide') vscode.env.openExternal(vscode.Uri.parse('https://github.com/yazanbaker94/AntiGravity-AutoAccept#setup'));
+    ).then(async action => {
+        if (action === 'Auto-Fix & Restart') {
+            const net = require('net');
+            let targetPort = configPort;
+            const isPortFree = await new Promise(res => {
+                const srv = net.createServer().listen(targetPort, '127.0.0.1', () => {
+                    srv.close(() => res(true));
+                }).on('error', () => res(false));
+            });
+            if (!isPortFree) {
+                // Find a free port in 9660-9699
+                for(let p = 9660; p <= 9699; p++) {
+                    const free = await new Promise(res => {
+                        const srv = net.createServer().listen(p, '127.0.0.1', () => { srv.close(() => res(true)); }).on('error', () => res(false));
+                    });
+                    if (free) { targetPort = p; break; }
+                }
+                if (targetPort !== configPort) {
+                    await vscode.workspace.getConfiguration('autoAcceptV2').update('cdpPort', targetPort, true);
+                    log(`[CDP] Port ${configPort} was busy. Selected new free port: ${targetPort}`);
+                }
+            }
+            applyPermanentWindowsPatch(targetPort);
+        } else if (action === 'Manual Guide') {
+            vscode.env.openExternal(vscode.Uri.parse('https://github.com/yazanbaker94/AntiGravity-AutoAccept#setup'));
+        }
     });
     return false;
 }
@@ -334,9 +357,9 @@ $flag = "--remote-debugging-port=${targetPort}"
 $WshShell = New-Object -comObject WScript.Shell
 $paths = @("$env:USERPROFILE\\\\Desktop", "$env:PUBLIC\\\\Desktop", "$env:APPDATA\\\\Microsoft\\\\Windows\\\\Start Menu\\\\Programs", "$env:ALLUSERSPROFILE\\\\Microsoft\\\\Windows\\\\Start Menu\\\\Programs", "$env:APPDATA\\\\Microsoft\\\\Internet Explorer\\\\Quick Launch\\\\User Pinned\\\\TaskBar")
 $patched = $false
-$manualFixNeeded = $false
 $patchedLnk = $null
 
+# 1. Patch Shortcuts
 foreach ($dir in $paths) {
     if (Test-Path $dir) {
         $files = Get-ChildItem -Path $dir -Filter "*.lnk" -Recurse -ErrorAction SilentlyContinue
@@ -344,18 +367,17 @@ foreach ($dir in $paths) {
             try {
                 $shortcut = $WshShell.CreateShortcut($file.FullName)
                 if ($file.Name -match "Antigravity" -or $shortcut.TargetPath -match "Antigravity") {
-                    if ($shortcut.Arguments -match "--remote-debugging-port=") {
-                        if ($shortcut.Arguments -notmatch $flag) {
-                            $manualFixNeeded = $true
-                        } else {
-                            if (-not $patchedLnk) { $patchedLnk = $file.FullName }
-                        }
+                    $args = $shortcut.Arguments
+                    if ($args -match "--remote-debugging-port=\\\\d+") {
+                        $shortcut.Arguments = $args -replace "--remote-debugging-port=\\\\d+", $flag
+                    } elseif ($args -match "--remote-debugging-port=") {
+                        $shortcut.Arguments = $args -replace "--remote-debugging-port=", "--remote-debugging-port=${targetPort}"
                     } else {
-                        $shortcut.Arguments = ("$($shortcut.Arguments) " + $flag).Trim()
-                        $shortcut.Save()
-                        $patched = $true
-                        if (-not $patchedLnk) { $patchedLnk = $file.FullName }
+                        $shortcut.Arguments = ("$args " + $flag).Trim()
                     }
+                    $shortcut.Save()
+                    $patched = $true
+                    if (-not $patchedLnk) { $patchedLnk = $file.FullName }
                 }
             } catch {
                 # Silently ignore COM exceptions from protected system shortcuts
@@ -363,41 +385,66 @@ foreach ($dir in $paths) {
         }
     }
 }
-if ($manualFixNeeded) { Write-Output "MANUAL_NEEDED" }
-elseif ($patched -or $patchedLnk) { Write-Output "SUCCESS|$patchedLnk" }
+
+# 2. Patch Registry Autorun
+$regPath = "HKCU:\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Run"
+try {
+    $val = Get-ItemProperty -Path $regPath -Name "Antigravity" -ErrorAction SilentlyContinue
+    if ($val) {
+        $cmd = $val.Antigravity
+        if ($cmd -match "--remote-debugging-port=\\\\d+") {
+            $cmd = $cmd -replace "--remote-debugging-port=\\\\d+", $flag
+        } elseif ($cmd -match "--remote-debugging-port=") {
+            $cmd = $cmd -replace "--remote-debugging-port=", "--remote-debugging-port=${targetPort}"
+        } else {
+            $cmd = ("$cmd " + $flag).Trim()
+        }
+        Set-ItemProperty -Path $regPath -Name "Antigravity" -Value $cmd -Force
+    }
+} catch { }
+
+# 3. Kill Zombies & Restart
+$exePath = $null
+$proc = Get-Process -Name "Antigravity" -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($proc -and $proc.Path) { $exePath = $proc.Path }
+
+$allProcs = Get-Process -Name "Antigravity" -ErrorAction SilentlyContinue
+if ($allProcs) {
+    $allProcs | Stop-Process -Force
+    Start-Sleep -Seconds 2
+}
+
+if ($exePath) {
+    Start-Process -FilePath $exePath -ArgumentList $flag
+} elseif ($patchedLnk) {
+    Invoke-Item $patchedLnk
+}
+
+if ($patched -or $patchedLnk) { Write-Output "SUCCESS|$patchedLnk" }
 else { Write-Output "NOT_FOUND" }
 `;
 
     // Encode to UTF-16LE Base64 for safe fileless execution (bypasses Win11 ASR policies)
     const base64Script = Buffer.from(psContent, 'utf16le').toString('base64');
 
-    log(`[CDP] Running fileless shortcut patcher for port ${targetPort}...`);
+    log(`[CDP] Running fileless shortcut & registry patcher for port ${targetPort}...`);
     cp.exec(`powershell -WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${base64Script}`,
         { windowsHide: true },
         (err, stdout) => {
 
             if (err) {
                 log(`[CDP] Patcher error: ${err.message}`);
-                vscode.window.showWarningMessage('Shortcut patching failed. Please add the flag manually.');
+                vscode.window.showWarningMessage('Auto-Fix failed. Please add the flag manually according to the guide.');
                 return;
             }
             const out = stdout.trim();
             log(`[CDP] Patcher output: ${out}`);
-            if (out.includes('MANUAL_NEEDED')) {
-                vscode.window.showWarningMessage(
-                    `Your shortcut already has a debugging port. Please manually change it to ${targetPort} in the shortcut properties.`
-                );
-            } else if (out.includes('SUCCESS|')) {
+            if (out.includes('SUCCESS|')) {
                 const lnkPath = out.split('SUCCESS|')[1].trim();
-                log(`[CDP] ✓ Shortcut ready: ${lnkPath}`);
+                log(`[CDP] ✓ Auto-Fix complete, restarted with ${lnkPath}`);
                 vscode.window.showInformationMessage(
-                    `✅ Shortcut ready! Restart Antigravity to activate AutoAccept.`,
-                    'Restart Now'
-                ).then(action => {
-                    if (action === 'Restart Now') {
-                        vscode.commands.executeCommand('workbench.action.reloadWindow');
-                    }
-                });
+                    `✅ AutoAccept Fix applied! Antigravity was restarted with valid Debug Port (${targetPort}).`
+                );
             } else {
                 log('[CDP] No matching shortcuts found');
                 vscode.window.showWarningMessage(

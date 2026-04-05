@@ -441,30 +441,22 @@ function buildDOMObserverScript(customTexts, blockedCommands, allowedCommands, a
                 var btn = match.node;
                 var matchedText = match.matchedText;
 
-            // Command filtering: applies to command-execution buttons near code blocks.
-            // Skip expand/preview buttons — they're UI chrome that toggles collapsed
-            // content, not terminal command executors. Filtering them causes false
-            // positives when nearby chat text contains blocked words (e.g., discussing
-            // "echo" in conversation), which cascades to hide the actual Run button.
-            var isExpandBtn = (matchedText === 'expand' || matchedText === 'requires input');
-            if (currentHasFilters && !isExpandBtn) {
+            // Command filtering: applies to command-execution buttons ('run').
+            // Skip non-terminal buttons (accept, allow, expand) — they are not executing code.
+            if (currentHasFilters && TERMINAL_BUTTON_TEXTS.indexOf(matchedText) !== -1) {
                 var cmdText = extractCommandText(btn);
-                if (cmdText !== null) {
-                    // Terminal command detected — apply blocklist/allowlist filter
-                    if (!isCommandAllowed(cmdText)) {
-                        // Stamp the DOM element itself — shared across all JS contexts.
-                        // JS-variable cooldowns are isolated per CDP session scope,
-                        // but data attributes live on the DOM and are visible to all observers.
-                        btn.setAttribute('data-aa-blocked', 'true');
-                        // Visual block indicator — immediate UX feedback
-                        btn.style.cssText += ';background:#4a1c1c !important;opacity:0.6;cursor:not-allowed;';
-                        btn.textContent = '🚫 Blocked by Filter';
-                        var blockKey = _domPath(btn) + ':' + (btn.textContent || '').trim().toLowerCase().substring(0, 30);
-                        clickCooldowns[blockKey] = Date.now() + (15000 - COOLDOWN_MS);
-                        if (!window.__AA_DIAG) window.__AA_DIAG = [];
-                        if (window.__AA_DIAG.length < 50) window.__AA_DIAG.push({ action: 'BLOCKED', time: Date.now(), matched: matchedText, cmd: (cmdText || '').substring(0, 60) });
-                        continue; // Re-scan to find next button
-                    }
+                if (cmdText !== null && isCommandAllowed(cmdText)) {
+                    // allow
+                } else {
+                    // Terminal command detected but blocked, or couldn't extract text (fail closed)
+                    btn.setAttribute('data-aa-blocked', 'true');
+                    btn.style.cssText += ';background:#4a1c1c !important;opacity:0.6;cursor:not-allowed;';
+                    btn.textContent = '🚫 Blocked by Filter';
+                    var blockKey = _domPath(btn) + ':' + (btn.textContent || '').trim().toLowerCase().substring(0, 30);
+                    clickCooldowns[blockKey] = Date.now() + (15000 - COOLDOWN_MS);
+                    if (!window.__AA_DIAG) window.__AA_DIAG = [];
+                    if (window.__AA_DIAG.length < 50) window.__AA_DIAG.push({ action: 'BLOCKED', time: Date.now(), matched: matchedText, cmd: (cmdText || '').substring(0, 60) });
+                    continue; // Re-scan to find next button
                 }
             }
 
@@ -483,7 +475,7 @@ function buildDOMObserverScript(customTexts, blockedCommands, allowedCommands, a
                 } catch(e) {}
                 if (!window.__AA_DIAG) window.__AA_DIAG = [];
                 var diagCmdText = extractCommandText(btn);
-                if (window.__AA_DIAG.length < 50) window.__AA_DIAG.push({ action: 'CLICKED', time: Date.now(), matched: matchedText, cmd: diagCmdText ? diagCmdText.substring(0, 80) : 'NULL', url: (location.href || '').substring(0, 60), near: nearbyText.substring(0, 60) });
+                if (window.__AA_DIAG.length < 50) window.__AA_DIAG.push({ action: 'CLICKED', time: Date.now(), matched: matchedText, cmd: diagCmdText ? diagCmdText.substring(0, 80) : 'NULL', url: (window.location && window.location.href ? window.location.href : '').substring(0, 60), near: nearbyText.substring(0, 60) });
 
                 // ═══ RETRY CIRCUIT BREAKER ═══
                 // Prevents infinite loops when the model hits context limits or network

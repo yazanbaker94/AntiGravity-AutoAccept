@@ -24,6 +24,7 @@ class El {
         this.disabled = !!attrs.disabled;
         this.onclick = attrs.onclick || null;
         this.shadowRoot = attrs.shadowRoot || null;
+        this.style = { cssText: '' };
         this.children = kids;
         this.parentElement = null;
         this._clicked = false;
@@ -52,6 +53,15 @@ class El {
             }
         }
         return null;
+    }
+    querySelectorAll(sel) {
+        const all = this._flat();
+        const selectors = sel.split(',').map(s => s.trim().toUpperCase());
+        const results = [];
+        for (const el of all) {
+            if (selectors.includes(el.tagName)) results.push(el);
+        }
+        return results;
     }
     _flat() {
         let r = [];
@@ -95,7 +105,7 @@ function run(doc, custom = [], blocked = [], allowed = []) {
     const fn = new Function('document', 'NodeFilter', 'window', 'requestAnimationFrame', 'MutationObserver', 'return ' + script);
 
     // Mock window, requestAnimationFrame, and MutationObserver
-    const mockWindow = {};
+    const mockWindow = { location: { href: 'vscode-webview://mock' } };
 
     // If tests pre-set doc.defaultView properties (e.g. __AA_PAUSED), copy them
     if (doc.defaultView) {
@@ -310,9 +320,10 @@ test('data-testid on plain DIV is NOT clicked', () => {
 // ═════════════════════════════════════════════════════════════════════
 console.log('\n\x1b[1m--- Expand Banner (Pass 2) ---\x1b[0m');
 
-test('"Expand" clicked when no action buttons exist', () => {
+test('"Expand" clicked when in requires input context', () => {
     const btn = new El('BUTTON', 'Expand');
-    run(makeDoc([btn]));
+    const container = new El('DIV', 'Requires Input', {}, [btn]);
+    run(makeDoc([container]));
     assert.ok(btn._clicked);
 });
 
@@ -322,10 +333,10 @@ test('"Requires Input" banner clicked (startsWith match)', () => {
     assert.ok(btn._clicked);
 });
 
-test('"1 Step Requires Input" does NOT match (prefix mismatch)', () => {
+test('"1 Step Requires Input" matches (relaxed substring match)', () => {
     const btn = new El('BUTTON', '1 Step Requires Input');
     run(makeDoc([btn]));
-    assert.ok(!btn._clicked);
+    assert.ok(btn._clicked);
 });
 
 test('action buttons beat expand', () => {
@@ -397,7 +408,7 @@ test('returns observer-installed on agent panel', () => {
 });
 
 test('idempotent: second injection returns already-active', () => {
-    const mockWindow = {};
+    const mockWindow = { location: { href: 'vscode-webview://mock' } };
     const doc = makeDoc([]);
     const script = buildDOMObserverScript([]).trim();
     const fn = new Function('document', 'NodeFilter', 'window', 'requestAnimationFrame', 'MutationObserver', 'return ' + script);
