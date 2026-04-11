@@ -7,6 +7,26 @@
 
 Automatically accept agent steps, terminal commands, file edits, and permission prompts in [Antigravity](https://antigravity.dev) — Google's AI coding assistant.
 
+---
+
+### 🐝 Swarm Mode Pro — Multi-Agent Auto-Accept
+
+> **Run unlimited background agents completely hands-free.**
+
+Antigravity's Agent Manager can only interact with the **active conversation**. Background agents sit idle until you manually click through each one. **Swarm Mode** solves this — it automatically navigates between all your pending Agent Manager conversations via CDP, clicking Accept/Run/Allow across every agent.
+
+**Start 5 agents. Minimize the window. Walk away. Swarm handles everything.**
+
+| Plan | Price | Link |
+|------|-------|------|
+| Monthly | $9/mo | [**Get Monthly →**](https://yazanbake.gumroad.com/l/auto-accept-monthly) |
+| Yearly | $79/yr (save 27%) | [**Get Yearly →**](https://yazanbake.gumroad.com/l/auto-accept-yearly) |
+| Lifetime | $199 one-time | [**Get Lifetime →**](https://yazanbake.gumroad.com/l/auto-accept-lifetime) |
+
+📖 **[Full Swarm Mode Guide →](docs/guide/swarm-mode-guide.md)** — Setup, activation, usage, and FAQ.
+
+---
+
 ## What it does
 
 When the Antigravity agent proposes file edits, terminal commands, or asks for tool permissions, this extension auto-accepts them so you don't have to click every button manually.
