@@ -333,7 +333,7 @@ class ConnectionManager {
         this._swarmConfig = null; this._swarmScript = null; this._recentClicks = [];
         if (this._activeScans) this._activeScans.clear();
         
-        const killScript = 'window.__AA_SWARM_OBS=false;window.__AA_SWARM_PAUSED=true;window.__AA_SWARM_DEAD=true;' +
+        const killScript = 'window.__AA_SWARM_OBS=false;window.__AA_SWARM_PAUSED=false;window.__AA_SWARM_DEAD=true;' +
             'if(window.__AA_SWARM_TIMER)clearInterval(window.__AA_SWARM_TIMER);' +
             'if(window.__AA_SWEEP_TIMER)clearInterval(window.__AA_SWEEP_TIMER);"disabled"';
             

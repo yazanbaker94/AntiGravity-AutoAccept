@@ -199,7 +199,12 @@ async function activateSwarmMode(context, forceRefresh = false) {
         log('[Swarm] No Pro key configured — Swarm Mode unavailable');
         _ghostSwitchEnabled = false;
         await context.globalState.update('aa_swarm_active', false);
-        if (connectionManager) connectionManager.disableSwarm(); 
+        if (connectionManager) connectionManager.disableSwarm();
+        if (telegramBridge) {
+            telegramBridge.unpair().catch(() => {});
+            telegramBridge.stop();
+            telegramBridge = null;
+        }
         return;
     }
 
@@ -253,6 +258,10 @@ async function activateSwarmMode(context, forceRefresh = false) {
                 // 401/403 = Invalid key or device limit — WIPE secrets to close the "forever offline" exploit
                 if (res.status === 401 || res.status === 403) {
                     try { await context.secrets.delete('aa_swarm_script'); } catch(e) {}
+                    // 🛑 Tell Cloudflare to drop the Telegram session
+                    if (telegramBridge) {
+                        await telegramBridge.unpair().catch(()=>{});
+                    }
                 }
                 await context.globalState.update('aa_swarm_active', false);
                 await context.globalState.update('aa_swarm_plan', '');
@@ -265,6 +274,8 @@ async function activateSwarmMode(context, forceRefresh = false) {
                 });
                 _ghostSwitchEnabled = false;
                 if (connectionManager) connectionManager.disableSwarm();
+                // ⚡ Kill Telegram bridge on invalid key — prevents zombie TG sessions
+                if (telegramBridge) { telegramBridge.stop(); telegramBridge = null; }
                 return;
             }
 
@@ -324,22 +335,22 @@ async function activateSwarmMode(context, forceRefresh = false) {
         } else {
             log('[Swarm] Config stored — will auto-inject when Agent Manager connects');
         }
-
-        // ⚡ Telegram Bridge: Start polling if paired
-        if (!telegramBridge && licenseKey) {
-            telegramBridge = new TelegramBridge({
-                log,
-                machineId: vscode.env.machineId,
-                licenseKey,
-                connectionManager,
-            });
-            telegramBridge.start();
-            log('[Telegram] Bridge initialized');
-        }
     } else {
         // Store for injection when connectionManager initialises
         context._pendingSwarmScript = swarmConfig;
         log('[Swarm] Config queued — will inject when CDP connects');
+    }
+
+    // ⚡ Telegram Bridge: Start polling if paired (independent of CDP — poll loop works without it)
+    if (!telegramBridge && licenseKey) {
+        telegramBridge = new TelegramBridge({
+            log,
+            machineId: vscode.env.machineId,
+            licenseKey,
+            connectionManager,
+        });
+        telegramBridge.start();
+        log('[Telegram] Bridge initialized');
     }
 }
 

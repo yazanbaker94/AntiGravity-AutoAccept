@@ -83,6 +83,7 @@ class TelegramBridge {
         if (this._convosPushTimer) { clearTimeout(this._convosPushTimer); this._convosPushTimer = null; }
         if (this._masterLockTimer) { clearTimeout(this._masterLockTimer); this._masterLockTimer = null; }
         if (this._activeWatcherTimer) { clearTimeout(this._activeWatcherTimer); this._activeWatcherTimer = null; }
+        this._commandQueue = []; // 🛑 Clear pending queue to kill ghost messages
         this.log('[Telegram] Bridge stopped');
     }
 
@@ -242,6 +243,8 @@ class TelegramBridge {
             const query = waitParam > 0 ? `?wait=${waitParam}` : '';
             const data = await this._get(`/poll${query}`, { 'X-Machine-Id': this.machineId }, 35000);
 
+            if (!this._running) return; // 🛑 Discard in-flight ghost messages if stopped
+
             if (data && data.cmds && Array.isArray(data.cmds)) {
                 data.cmds.forEach(cmd => {
                     const uniqueId = cmd.cmdId || cmd.ts;
@@ -336,10 +339,10 @@ class TelegramBridge {
     }
 
     async _drainQueue() {
-        if (this._processingCommand || this._commandQueue.length === 0) return;
+        if (this._processingCommand || this._commandQueue.length === 0 || !this._running) return;
         this._processingCommand = true;
 
-        while (this._commandQueue.length > 0) {
+        while (this._commandQueue.length > 0 && this._running) {
             let cmd = this._commandQueue.shift();
 
             // ── ⚡ AUTO-STITCHER: Reassemble Telegram's 4096-char split messages ──
@@ -1425,6 +1428,9 @@ class TelegramBridge {
             const rect = JSON.parse(rectVal);
             this.log(`[Telegram] 📸 Isolated response for capture: ${rect.width}x${rect.height}`);
 
+            // ⚡ Inject self-destruct timer — overlay kills itself after 5s even if cleanup CDP fails
+            await this.cm._workerEval(wsUrl, `setTimeout(()=>{const w=document.getElementById('aa-perfect-shot');if(w)w.remove()},5000)`, 1000).catch(()=>{});
+
             // Let DOM paint the clone
             await this._sleep(400);
 
@@ -1489,11 +1495,17 @@ class TelegramBridge {
                 }
             } finally {
                 // Always delete the wrapper even if a chunk fails
-                await this.cm._workerEval(wsUrl, this._scripts?.screenshotCleanup || `const w = document.getElementById('aa-perfect-shot'); if(w) w.remove();`, 2000).catch(()=>{});
+                const cleanupCode = this._scripts?.screenshotCleanup || `const w = document.getElementById('aa-perfect-shot'); if(w) w.remove();`;
+                await this.cm._workerEval(wsUrl, cleanupCode, 2000).catch(()=>{});
+                // ⚡ Retry cleanup after 1s in case the first attempt raced with DOM paint
+                setTimeout(() => {
+                    this.cm._workerEval(wsUrl, cleanupCode, 2000).catch(()=>{});
+                }, 1000);
             }
         } catch (e) {
             this.log(`[Telegram] Screenshot failed: ${e.message}`);
-            try { await this.cm._workerEval(wsUrl, this._scripts?.screenshotCleanup || `const w = document.getElementById('aa-perfect-shot'); if(w) w.remove();`, 2000); } catch(err){}
+            const cleanupCode = this._scripts?.screenshotCleanup || `const w = document.getElementById('aa-perfect-shot'); if(w) w.remove();`;
+            try { await this.cm._workerEval(wsUrl, cleanupCode, 2000); } catch(err){}
         }
     }
 
