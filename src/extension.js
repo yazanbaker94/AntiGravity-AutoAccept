@@ -10,6 +10,7 @@ const path = require('path');
 const { ConnectionManager } = require('./cdp/ConnectionManager');
 const { DashboardProvider } = require('./dashboard/DashboardProvider');
 const { pingTelemetry } = require('./telemetry');
+const { TelegramBridge } = require('./telegram/TelegramBridge');
 
 // ─── Persistent Memory Logger (survives OOM crash) ────────────────
 let _memLogTimer = null;
@@ -167,6 +168,11 @@ let statusBarItem = null;
 let outputChannel = null;
 let connectionManager = null;
 let dashboardProvider = null;
+let telegramBridge = null;
+
+// ─── Global Idle Tracker (Swarm focus-steal prevention) ─────────────
+let _lastUserActivity = Date.now();
+const _resetIdle = () => { _lastUserActivity = Date.now(); };
 
 // ─── Swarm Mode: Ghost Switch ─────────────────────────────────────────
 // Phase 1 Pro feature: detects background pending Run commands via the
@@ -185,29 +191,47 @@ const SWARM_CACHE_TTL  = 24 * 60 * 60 * 1000; // 24h
  * Fetches the Swarm observer script from the Cloudflare Worker and injects
  * it into the Agent Manager CDP target via SecretStorage-cached delivery.
  */
-async function activateSwarmMode(context) {
+async function activateSwarmMode(context, forceRefresh = false) {
     const config = vscode.workspace.getConfiguration('autoAcceptV2');
     const licenseKey = config.get('proLicenseKey', '').trim();
 
     if (!licenseKey) {
         log('[Swarm] No Pro key configured — Swarm Mode unavailable');
         _ghostSwitchEnabled = false;
+        await context.globalState.update('aa_swarm_active', false);
+        if (connectionManager) connectionManager.disableSwarm(); 
         return;
     }
 
     const cachedAt = context.globalState.get('aa_swarm_cached_at', 0);
-    const isFresh  = (Date.now() - cachedAt) < SWARM_CACHE_TTL;
-    let swarmScript = null;
+    const isFresh  = !forceRefresh && (Date.now() - cachedAt) < SWARM_CACHE_TTL;
+    let swarmConfig = null;
 
     if (isFresh) {
         // SecretStorage: encrypted by OS keychain, NOT plaintext SQLite
-        swarmScript = await context.secrets.get('aa_swarm_script');
-        if (swarmScript) {
-            log('[Swarm] Using cached script (within 24h)');
+        swarmConfig = await context.secrets.get('aa_swarm_script');
+        if (swarmConfig) {
+            // Validate JSON capability gate — bust legacy/stale cache
+            try {
+                const parsed = JSON.parse(swarmConfig);
+                if (!parsed.authorized) throw new Error('not authorized');
+                // 🛑 SECURITY: Bust cache if payload OR signature is missing (prevents Downgrade Attack)
+                if (!parsed.corePayload || !parsed.coreSignature) throw new Error('stale config: missing corePayload or signature');
+                log('[Swarm] Using cached config (within 24h, has signed payload)');
+            } catch(e) {
+                log(`[Swarm] Cache bust: ${e.message} — forcing fresh fetch`);
+                swarmConfig = null;
+                try { await context.secrets.delete('aa_swarm_script'); } catch(err) {}
+                await context.globalState.update('aa_swarm_cached_at', 0);
+            }
+            if (swarmConfig) {
+                // Ensure active state is set — critical for status bar visibility
+                await context.globalState.update('aa_swarm_active', true);
+            }
         }
     }
 
-    if (!swarmScript) {
+    if (!swarmConfig) {
         try {
             const res = await fetch(SWARM_WORKER_URL, {
                 method: 'POST',
@@ -240,30 +264,42 @@ async function activateSwarmMode(context) {
                         vscode.env.openExternal(vscode.Uri.parse('https://app.gumroad.com/library'));
                 });
                 _ghostSwitchEnabled = false;
+                if (connectionManager) connectionManager.disableSwarm();
                 return;
             }
 
-            swarmScript = await res.text();
+            swarmConfig = await res.text();
             const plan = res.headers.get('X-Plan') || '';
+
+            // Validate that it's valid JSON capability gate
+            try {
+                const parsed = JSON.parse(swarmConfig);
+                if (!parsed.authorized) throw new Error('not authorized');
+            } catch(e) {
+                log(`[Swarm] Invalid capability gate from worker: ${e.message}`);
+                _ghostSwitchEnabled = false;
+                if (connectionManager) connectionManager.disableSwarm();
+                return;
+            }
 
             // Store securely in OS keychain — try/catch for Linux/WSL where keychain may be unavailable
             try {
-                await context.secrets.store('aa_swarm_script', swarmScript);
+                await context.secrets.store('aa_swarm_script', swarmConfig);
             } catch (e) {
-                log(`[Swarm] Warning: OS Keychain unavailable. Script held in RAM only: ${e.message}`);
-                context._pendingSwarmScript = swarmScript;
+                log(`[Swarm] Warning: OS Keychain unavailable. Config held in RAM only: ${e.message}`);
+                context._pendingSwarmScript = swarmConfig;
             }
             await context.globalState.update('aa_swarm_cached_at', Date.now());
             await context.globalState.update('aa_swarm_plan', plan);
             await context.globalState.update('aa_swarm_active', true);
-            log(`[Swarm] Script fetched and cached in SecretStorage (plan: ${plan || 'unknown'})`);
+            log(`[Swarm] Config fetched and cached in SecretStorage (plan: ${plan || 'unknown'})`);
         } catch (e) {
             // Network failure or 502 — try stale cache with 7-day max offline limit
             const stale = await context.secrets.get('aa_swarm_script').catch(() => null);
             const MAX_OFFLINE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
             if (stale && (Date.now() - cachedAt) < MAX_OFFLINE_MS) {
-                swarmScript = stale;
+                swarmConfig = stale;
                 log(`[Swarm] Network error — using stale cache (${Math.round((Date.now() - cachedAt) / 86400000)}d old): ${e.message}`);
             } else {
                 log(`[Swarm] Offline >7 days or no cache. Deactivating: ${e.message}`);
@@ -271,23 +307,39 @@ async function activateSwarmMode(context) {
                 _ghostSwitchEnabled = false;
                 await context.globalState.update('aa_swarm_active', false);
                 await context.globalState.update('aa_swarm_plan', '');
+                if (connectionManager) connectionManager.disableSwarm();
                 return;
             }
         }
     }
 
     if (connectionManager) {
-        const ok = await connectionManager.injectSwarmObserver(swarmScript);
+        // Always store the config — even if CDP isn't connected yet.
+        // When Agent Manager connects later, it checks _swarmScript and auto-injects.
+        connectionManager._swarmScript = swarmConfig;
+        const ok = await connectionManager.injectSwarmObserver(swarmConfig);
         if (ok) {
             log('[Swarm] ✓ Swarm Mode active');
             _ghostSwitchEnabled = true;
         } else {
-            log('[Swarm] Observer not ready yet — will retry on next CDP connect');
+            log('[Swarm] Config stored — will auto-inject when Agent Manager connects');
+        }
+
+        // ⚡ Telegram Bridge: Start polling if paired
+        if (!telegramBridge && licenseKey) {
+            telegramBridge = new TelegramBridge({
+                log,
+                machineId: vscode.env.machineId,
+                licenseKey,
+                connectionManager,
+            });
+            telegramBridge.start();
+            log('[Telegram] Bridge initialized');
         }
     } else {
         // Store for injection when connectionManager initialises
-        context._pendingSwarmScript = swarmScript;
-        log('[Swarm] Script queued — will inject when CDP connects');
+        context._pendingSwarmScript = swarmConfig;
+        log('[Swarm] Config queued — will inject when CDP connects');
     }
 }
 
@@ -397,7 +449,7 @@ function startPolling() {
         // acceptor that handles the Run button in the agent chat UI.
         const isCdpActive = connectionManager && connectionManager.sessions.size > 0;
         if (isCdpActive) {
-            if (isEnabled && !cachedHasFilters) {
+            if (isEnabled && !cachedHasFilters && !(connectionManager && connectionManager.isPaused)) {
                 Promise.allSettled(TERMINAL_COMMANDS.map(cmd => vscode.commands.executeCommand(cmd))).catch(() => {});
             }
             pollIntervalId = setTimeout(pollCycle, interval);
@@ -467,15 +519,22 @@ function stopPolling() {
 // ─── CDP Auto-Fix: Detect & Repair ───────────────────────────────────
 
 // Graceful Dual-Port: configured port (default 9333), legacy 9222 fallback
+// 🛑 SECURITY: parseInt + range check prevents PowerShell injection via malicious workspace settings
 function getConfiguredPort() {
-    return vscode.workspace.getConfiguration('autoAcceptV2').get('cdpPort', 9333);
+    const port = parseInt(vscode.workspace.getConfiguration('autoAcceptV2').get('cdpPort', 9333), 10);
+    return (isNaN(port) || port < 1024 || port > 65535) ? 9333 : port;
 }
 
 function pingPort(port) {
     return new Promise((resolve) => {
-        const req = http.get({ hostname: '127.0.0.1', port, path: '/json/version', timeout: 800 }, (res) => {
-            res.on('data', () => { }); // Consume data to free memory
-            res.on('end', () => resolve(true));
+        const req = http.get({ hostname: '127.0.0.1', port, path: '/json/version', timeout: 1500 }, (res) => {
+            let data = '';
+            res.on('data', c => data += c);
+            res.on('end', () => {
+                // Ghost sockets accept TCP but return no valid HTTP/JSON data.
+                // Real CDP returns JSON like {"Browser":"...","webSocketDebuggerUrl":"..."}
+                resolve(data.length > 5 && data.includes('{'));
+            });
         });
         req.on('error', () => resolve(false));
         req.on('timeout', () => { req.destroy(); resolve(false); });
@@ -488,6 +547,71 @@ async function checkAndFixCDP() {
     if (await pingPort(configPort)) {
         log(`[CDP] Debug port ${configPort} active ✓`);
         return true;
+    }
+
+    // ── Ghost Socket Recovery ──────────────────────────────────────
+    // Port may be held by an orphan Electron process. Try to detect and kill it.
+    if (process.platform === 'win32') {
+        try {
+            const netstatResult = await new Promise((resolve) => {
+                // ⚡ FIX: Use LISTENING filter to avoid matching ephemeral ports
+                cp.exec(`netstat -ano | findstr LISTENING | findstr :${configPort}`, { windowsHide: true, timeout: 3000 }, (err, stdout) => {
+                    resolve(stdout?.trim() || '');
+                });
+            });
+            
+            if (netstatResult && netstatResult.includes('LISTENING')) {
+                // Port is held by something — extract PID
+                const match = netstatResult.match(/LISTENING\s+(\d+)/);
+                if (match) {
+                    const ghostPid = match[1];
+                    log(`[CDP] Ghost socket detected on port ${configPort} (PID ${ghostPid}). Attempting recovery...`);
+                    
+                    // ⚡ FIX: /T kills the entire process TREE (orphaned children holding handles)
+                    await new Promise((resolve) => {
+                        cp.exec(`taskkill /F /T /PID ${ghostPid}`, { windowsHide: true, timeout: 3000 }, (err) => {
+                            if (err) {
+                                log(`[CDP] Could not kill ghost PID ${ghostPid}: ${err.message}`);
+                            } else {
+                                log(`[CDP] Killed ghost process tree ${ghostPid}`);
+                            }
+                            resolve();
+                        });
+                    });
+
+                    // Wait for port to release, then retry
+                    await new Promise(r => setTimeout(r, 1500));
+                    if (await pingPort(configPort)) {
+                        log(`[CDP] Port ${configPort} recovered after tree-kill ✓`);
+                        return true;
+                    }
+
+                    // 🚀 AUTO PORT-HOPPING: Windows kernel has the port hostage — jump to next port
+                    let newPort = configPort + 1;
+                    if (newPort > 9345) newPort = 9333; // Wrap around safely
+                    
+                    log(`[CDP] ⚠ Port ${configPort} kernel-locked. Auto-hopping to Port ${newPort}...`);
+                    
+                    // Update settings globally
+                    await vscode.workspace.getConfiguration('autoAcceptV2').update('cdpPort', newPort, vscode.ConfigurationTarget.Global);
+                    
+                    // Rewrite the Windows Shortcut silently with the new port
+                    applyPermanentWindowsPatch(newPort);
+                    
+                    vscode.window.showWarningMessage(
+                        `⚠ Port ${configPort} stuck by Windows. AutoAccept auto-hopped to Port ${newPort} and updated your shortcut. Please restart to apply.`,
+                        'Restart Now'
+                    ).then(action => {
+                        if (action === 'Restart Now') {
+                            vscode.commands.executeCommand('workbench.action.reloadWindow');
+                        }
+                    });
+                    return false;
+                }
+            }
+        } catch (e) {
+            log(`[CDP] Ghost socket check error: ${e.message}`);
+        }
     }
 
     // Port refused — prompt user
@@ -599,12 +723,28 @@ function activate(context) {
     // Telemetry: anonymous activation ping (fire-and-forget)
     pingTelemetry('activate', context, log);
 
-    // Initialize persistent CDP connection manager
+    // Idle guard for Swarm: track user interactions to prevent focus theft.
+    // IMPORTANT: typing in webviews (agent chat input) does NOT fire any of these.
+    // We track as many signals as possible and use a generous idle threshold (15s)
+    // to avoid navigating while the user is typing in a chat.
+    context.subscriptions.push(
+        vscode.window.onDidChangeTextEditorSelection(_resetIdle),  // cursor/typing in editor
+        vscode.window.onDidChangeActiveTerminal(_resetIdle),       // terminal focus
+        vscode.window.onDidChangeActiveTextEditor(_resetIdle),     // tab switch
+        vscode.window.onDidChangeVisibleTextEditors(_resetIdle),   // panel layout change
+        vscode.window.onDidChangeWindowState((e) => { if (e.focused) _resetIdle(); })  // window focus
+    );
+
     connectionManager = new ConnectionManager({
         log,
         getPort: getConfiguredPort,
-        getCustomTexts: () => vscode.workspace.getConfiguration('autoAcceptV2').get('customButtonTexts', [])
+        getCustomTexts: () => vscode.workspace.getConfiguration('autoAcceptV2').get('customButtonTexts', []),
+        getLastUserActivity: () => _lastUserActivity
     });
+    // CRITICAL: Set swarm pause state BEFORE activateSwarmMode runs (line ~731).
+    // Without this, the scan loop starts with swarmPaused=false and navigates
+    // before the pause state is restored at line ~853.
+    connectionManager.swarmPaused = context.globalState.get('aa_swarm_paused', true);
 
     // Refresh dashboard when CDP status changes (connect/disconnect)
     connectionManager.onStatusChange = () => {
@@ -683,6 +823,15 @@ function activate(context) {
     // Attempt Swarm Mode activation (Pro license check)
     activateSwarmMode(context);
 
+    // ⚡ Silent Background Payload Refresh (every 12 hours)
+    // Ensures users who leave VS Code open for weeks never hit the 14-day payload expiry.
+    // Respects the 24h SWARM_CACHE_TTL — only hits the network if cache is stale.
+    setInterval(() => {
+        if (context.globalState.get('aa_swarm_active', false)) {
+            activateSwarmMode(context, false).catch(() => {});
+        }
+    }, 12 * 60 * 60 * 1000);
+
     // Hot-reload: watch for config changes and push to live CDP sessions
     context.subscriptions.push(
         vscode.workspace.onDidChangeConfiguration(e => {
@@ -695,6 +844,7 @@ function activate(context) {
                     context.globalState.update('aa_swarm_cached_at', 0);
                     activateSwarmMode(context).then(() => {
                         if (dashboardProvider) dashboardProvider.refresh();
+                        if (typeof updateSwarmPauseBar === 'function') updateSwarmPauseBar();
                     });
                 } else {
                     if (dashboardProvider) dashboardProvider.refresh();
@@ -793,78 +943,167 @@ function activate(context) {
         })
     );
 
-    // SSH Remote detection: CDP is architecturally impossible in remote mode.
-    // The extension runs on the headless remote server (Node.js), but the UI
-    // renders on the local Electron client. Channel 1 (VS Code commands) works
-    // natively over RPC, so we fall back to polling-only mode.
-    if (vscode.env.remoteName) {
-        log(`[Setup] Remote environment (${vscode.env.remoteName}) detected. CDP disabled.`);
-        log('[Setup] Operating in Channel 1 (command polling) mode only.');
-        if (context.globalState.get('autoAcceptV2Enabled', false)) {
-            isEnabled = true;
-            startPolling();
+    // ── Swarm Mode Commands ──
+
+    // Swarm Pause status bar indicator
+    const swarmPauseBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 98);
+    swarmPauseBar.command = 'autoAcceptV2.toggleSwarmPause';
+    context.subscriptions.push(swarmPauseBar);
+    // Persist swarm pause state across Reload Window. Default: PAUSED.
+    // Swarm navigation is opt-in — user must Ctrl+Shift+S to enable.
+    let _swarmPaused = context.globalState.get('aa_swarm_paused', true);
+    // Sync persisted pause state to ConnectionManager immediately.
+    // CM was created at line ~645 with swarmPaused=false. If the user paused
+    // before last reload, the CM wouldn't know without this sync.
+    if (connectionManager) connectionManager.swarmPaused = _swarmPaused;
+    if (_swarmPaused) log('[Swarm] Restored pause state: PAUSED (persisted)');
+
+    function updateSwarmPauseBar() {
+        if (!context.globalState.get('aa_swarm_active', false)) {
+            swarmPauseBar.hide();
+            return;
         }
-        updateStatusBar();
-        log('Extension activated');
-        showWeeklyToast(context);
-        return;
+        swarmPauseBar.text = _swarmPaused ? '$(debug-pause) Swarm PAUSED' : '$(play) Swarm';
+        swarmPauseBar.tooltip = _swarmPaused
+            ? 'Swarm Mode is PAUSED (Ctrl+Shift+S to resume)'
+            : 'Swarm Mode is running (Ctrl+Shift+S to pause)';
+        swarmPauseBar.backgroundColor = _swarmPaused
+            ? new vscode.ThemeColor('statusBarItem.warningBackground')
+            : undefined;
+        swarmPauseBar.show();
     }
 
-    // Check CDP on activation — prompt auto-fix if port is closed
-    checkAndFixCDP().then(cdpOk => {
-        if (cdpOk) {
-            // Restore saved state
-            if (context.globalState.get('autoAcceptV2Enabled', false)) {
-                isEnabled = true;
-                startPolling();
-            }
-        } else {
-            log('CDP not available — bot will not start until debug port is enabled');
-        }
-        updateStatusBar();
-        log('Extension activated');
+    // Refresh Swarm — bust cache and re-fetch script from Worker
+    context.subscriptions.push(
+        vscode.commands.registerCommand('autoAcceptV2.refreshSwarm', async () => {
+            log('[Swarm] Manual cache bust requested');
+            await context.globalState.update('aa_swarm_cached_at', 0);
+            try { await context.secrets.delete('aa_swarm_script'); } catch(e) {}
+            await activateSwarmMode(context, true);
+            if (dashboardProvider) dashboardProvider.refresh();
+            updateSwarmPauseBar();
+            vscode.window.showInformationMessage('Swarm Mode: Cache cleared & config refreshed ✓');
+        })
+    );
 
-        // Weekly stats toast — drives dashboard opens (sponsor impressions)
-        showWeeklyToast(context);
+    // ⚡ THE SWARM PAUSE TOGGLE
+    context.subscriptions.push(
+        vscode.commands.registerCommand('autoAcceptV2.toggleSwarmPause', async () => {
+            if (!isEnabled) { vscode.window.showWarningMessage('AutoAccept is globally OFF. Enable it first.'); return; }
+            if (!context.globalState.get('aa_swarm_active', false)) {
+                vscode.window.showInformationMessage('Swarm Mode requires a Pro license.', 'Get Pro').then(c => { if (c === 'Get Pro') vscode.env.openExternal(vscode.Uri.parse('https://yazanbake.gumroad.com/l/auto-accept')); });
+                return;
+            }
+            
+            _swarmPaused = !_swarmPaused;
+            context.globalState.update('aa_swarm_paused', _swarmPaused);
+            
+            if (connectionManager) {
+                // ⚡ FIX: Removed _localPauseOrigin tracking.
+                // The setter natively handles file lock writing and CDP broadcasts.
+                connectionManager.swarmPaused = _swarmPaused;
+                if (!_swarmPaused) { connectionManager._lastWebviewActivity = 0; _lastUserActivity = 0; }
+            }
+            updateSwarmPauseBar();
+            vscode.window.showInformationMessage(_swarmPaused ? 'Swarm Mode: ⏸ PAUSED' : 'Swarm Mode: ▶ RESUMED');
+        })
+    );
+
+    setTimeout(() => updateSwarmPauseBar(), 3000);
+
+    if (connectionManager) {
+        connectionManager.onSwarmPauseChange = (isPaused) => {
+            if (isPaused && !_swarmPaused) {
+                // Another window paused → sync this window's UI
+                _swarmPaused = true;
+                context.globalState.update('aa_swarm_paused', true);
+                updateSwarmPauseBar();
+                log('[Swarm] Paused by another window (cross-process sync)');
+            } else if (!isPaused && _swarmPaused) {
+                // Another window resumed → sync this window's UI
+                _swarmPaused = false;
+                context.globalState.update('aa_swarm_paused', false);
+                connectionManager._lastWebviewActivity = 0; _lastUserActivity = 0;
+                updateSwarmPauseBar();
+                log('[Swarm] Resumed by another window (cross-process sync)');
+            }
+        };
+    }
+
+    // ── Telegram Bot Commands ──
+    context.subscriptions.push(
+        vscode.commands.registerCommand('autoAcceptV2.telegramPair', async () => {
+            if (!context.globalState.get('aa_swarm_active', false)) {
+                vscode.window.showWarningMessage('Telegram Remote requires a Pro license.');
+                return;
+            }
+            if (!telegramBridge) {
+                vscode.window.showWarningMessage('Telegram bridge not initialized. Ensure Swarm Mode is active.');
+                return;
+            }
+            const result = await telegramBridge.requestPairingToken();
+            if (!result) {
+                vscode.window.showErrorMessage('Failed to generate pairing token. Check your connection.');
+                return;
+            }
+            if (result.status === 'already_paired') {
+                vscode.window.showInformationMessage(`✅ Already connected to Telegram (${result.username || 'user'}).`, 'Disconnect').then(c => {
+                    if (c === 'Disconnect') vscode.commands.executeCommand('autoAcceptV2.telegramUnpair');
+                });
+                return;
+            }
+            if (result.botUrl) {
+                await context.globalState.update('aa_telegram_pairing_url', result.botUrl);
+                vscode.env.openExternal(vscode.Uri.parse(result.botUrl));
+                vscode.window.showInformationMessage('🤖 Opened Telegram — tap Start to connect!', 'Copy Link').then(c => {
+                    if (c === 'Copy Link') vscode.env.clipboard.writeText(result.botUrl);
+                });
+                if (dashboardProvider) dashboardProvider.refresh();
+            }
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('autoAcceptV2.telegramUnpair', async () => {
+            if (telegramBridge) {
+                await telegramBridge.unpair();
+                vscode.window.showInformationMessage('🔌 Telegram disconnected.');
+                await context.globalState.update('aa_telegram_pairing_url', '');
+                if (dashboardProvider) dashboardProvider.refresh();
+            }
+        })
+    );
+
+    if (vscode.env.remoteName) {
+        if (context.globalState.get('autoAcceptV2Enabled', false)) { isEnabled = true; startPolling(); }
+        updateStatusBar(); showWeeklyToast(context); return;
+    }
+
+    checkAndFixCDP().then(cdpOk => {
+        if (cdpOk) { if (context.globalState.get('autoAcceptV2Enabled', false)) { isEnabled = true; startPolling(); } }
+        updateStatusBar(); showWeeklyToast(context);
     });
 }
 
-/**
- * Show a weekly stats notification to drive dashboard traffic.
- * Fires at most once per 7 days. Clicking "View Full Stats" opens the dashboard.
- */
 function showWeeklyToast(context) {
     const WEEK_MS = 604800000;
     const lastToast = context.globalState.get('autoAcceptLastToastDate', 0);
     const now = Date.now();
-
-    if (now - lastToast < WEEK_MS) return; // Already shown this week
+    if (now - lastToast < WEEK_MS) return; 
 
     const totalClicks = context.globalState.get('autoAcceptTotalClicks', 0);
-    if (totalClicks < 10) return; // Skip for brand-new users with no meaningful data
+    if (totalClicks < 10) return; 
 
     const minsSaved = Math.round((totalClicks * SECONDS_SAVED_PER_CLICK) / 60);
-    const timeStr = minsSaved >= 60
-        ? `${Math.floor(minsSaved / 60)}h ${minsSaved % 60}m`
-        : `${minsSaved} mins`;
-
-    vscode.window.showInformationMessage(
-        `⚡ AutoAccept has saved you ${timeStr} of manual clicking so far!`,
-        'View Full Stats'
-    ).then(action => {
-        if (action === 'View Full Stats') {
-            vscode.commands.executeCommand('autoAcceptV2.dashboard');
-        }
-    });
-
+    const timeStr = minsSaved >= 60 ? `${Math.floor(minsSaved / 60)}h ${minsSaved % 60}m` : `${minsSaved} mins`;
+    vscode.window.showInformationMessage(`⚡ AutoAccept has saved you ${timeStr} of manual clicking so far!`, 'View Full Stats').then(action => { if (action === 'View Full Stats') vscode.commands.executeCommand('autoAcceptV2.dashboard'); });
     context.globalState.update('autoAcceptLastToastDate', now);
-    log(`[Toast] Weekly stats notification shown (${timeStr} saved)`);
 }
 
 function deactivate() {
-    stopMemoryLogger();
-    stopPolling();
-    if (connectionManager) connectionManager.stop(); // Full teardown on deactivation
+    stopMemoryLogger(); stopPolling();
+    if (telegramBridge) { telegramBridge.stop(); telegramBridge = null; }
+    if (connectionManager) connectionManager.stop(); 
     if (outputChannel) outputChannel.dispose();
 }
 

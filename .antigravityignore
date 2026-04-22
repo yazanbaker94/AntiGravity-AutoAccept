@@ -1,0 +1,65 @@
+﻿# Heavy binaries — stop the language server from indexing these
+*.glb
+*.gltf
+*.fbx
+*.obj
+*.stl
+*.pdf
+*.exe
+*.dll
+*.node
+*.wasm
+*.bin
+*.so
+*.dylib
+
+# Media
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.svg
+*.ico
+*.mp4
+*.mp3
+*.wav
+*.ogg
+*.webm
+
+# Archives
+*.zip
+*.tar
+*.gz
+*.7z
+*.rar
+
+# Fonts
+*.ttf
+*.woff
+*.woff2
+*.otf
+*.eot
+
+# Maps
+*.map
+
+# Build artifacts
+dist/
+build/
+.next/
+out/
+.vercel/
+.wrangler/
+
+# Dependencies
+node_modules/
+
+# VCS
+.git/
+
+# Coverage
+coverage/
+# Extension bundles
+*.vsix
+

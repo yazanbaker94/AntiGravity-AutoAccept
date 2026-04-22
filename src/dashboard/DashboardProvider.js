@@ -212,6 +212,12 @@ class DashboardProvider {
             case 'refresh':
                 this._pushState();
                 break;
+            case 'telegramPair':
+                vscode.commands.executeCommand('autoAcceptV2.telegramPair');
+                break;
+            case 'telegramUnpair':
+                vscode.commands.executeCommand('autoAcceptV2.telegramUnpair');
+                break;
             case 'dismissMilestone': {
                 this._context.globalState.update('autoAcceptLastDismissedMilestone', msg.value);
                 this._pushState();
@@ -442,11 +448,16 @@ class DashboardProvider {
             </div>
             <div class="license-status" id="license-status"></div>
             <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-                <a href="https://yazanbake.gumroad.com/l/auto-accept-monthly" style="color:var(--warning);font-size:11px;font-weight:600" target="_blank" rel="noopener">&#8599; Get Monthly ($9/mo)</a>
+                <a href="https://yazanbake.gumroad.com/l/auto-accept" style="color:var(--warning);font-size:11px;font-weight:600" target="_blank" rel="noopener">&#8599; Get Pro (Free Trial)</a>
                 <span style="opacity:0.3;font-size:11px">|</span>
-                <a href="https://yazanbake.gumroad.com/l/auto-accept-yearly" style="color:var(--warning);font-size:11px;font-weight:600" target="_blank" rel="noopener">&#8599; Get Yearly ($79/yr)</a>
-                <span style="opacity:0.3;font-size:11px">|</span>
-                <a href="https://yazanbake.gumroad.com/l/auto-accept-lifetime" style="color:var(--vscode-descriptionForeground);font-size:11px;font-weight:600" target="_blank" rel="noopener">&#8599; Lifetime ($199)</a>
+                <a href="https://github.com/yazanbaker94/AntiGravity-AutoAccept/blob/main/docs/guide/swarm-mode-guide.md" style="color:var(--vscode-textLink-foreground, var(--accent));font-size:11px;font-weight:600" target="_blank" rel="noopener">&#128214; Swarm Guide</a>
+            </div>
+            <div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.08)">
+                <div style="display:flex;align-items:center;gap:8px">
+                    <button class="btn" id="btn-telegram" style="background:linear-gradient(135deg,#0088cc,#00aaee);color:#fff;font-weight:700;font-size:12px;padding:6px 14px;border:none;border-radius:6px;cursor:pointer" onclick="telegramAction()">&#129302; Connect Telegram</button>
+                    <span id="telegram-status" style="font-size:11px;opacity:0.7"></span>
+                </div>
+                <div style="font-size:10px;opacity:0.5;margin-top:4px">Control agents from your phone via Telegram</div>
             </div>
         </div>
     </div>
@@ -606,6 +617,21 @@ class DashboardProvider {
 
     function updateConfig(key, value) {
         vscode.postMessage({ type: 'updateConfig', key, value });
+    }
+
+    function telegramAction() {
+        const btn = document.getElementById('btn-telegram');
+        const isConnected = btn.textContent.includes('Disconnect');
+        if (isConnected) {
+            vscode.postMessage({ type: 'telegramUnpair' });
+            btn.textContent = '\\u{1F916} Connect Telegram';
+            document.getElementById('telegram-status').textContent = '';
+        } else {
+            btn.textContent = '\\u23F3 Connecting...';
+            btn.disabled = true;
+            vscode.postMessage({ type: 'telegramPair' });
+            setTimeout(() => { btn.disabled = false; btn.textContent = '\\u{1F916} Connect Telegram'; }, 5000);
+        }
     }
 
     function addBlocked() {

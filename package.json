@@ -1,118 +1,147 @@
 {
-    "name": "antigravity-autoaccept",
-    "displayName": "AntiGravity AutoAccept",
-    "description": "Auto-accept Run, Accept, and Always Allow buttons in Antigravity via CDP with Webview Guard isolation.",
-    "version": "3.15.0",
-    "publisher": "YazanBaker",
-    "icon": "images/icon.png",
-    "engines": {
-        "vscode": "^1.68.0"
-    },
-    "categories": [
-        "Other"
+  "name": "antigravity-autoaccept",
+  "displayName": "AntiGravity AutoAccept",
+  "description": "Auto-accept Run, Accept, and Always Allow buttons in Antigravity via CDP with Webview Guard isolation.",
+  "version": "3.26.5",
+  "publisher": "YazanBaker",
+  "icon": "images/icon.png",
+  "engines": {
+    "vscode": "^1.68.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "*"
+  ],
+  "main": "./src/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "autoAcceptV2.toggle",
+        "title": "Auto Accept V2: Toggle ON/OFF"
+      },
+      {
+        "command": "autoAcceptV2.dashboard",
+        "title": "Auto Accept V2: Open Dashboard"
+      },
+      {
+        "command": "autoAcceptV2.refreshSwarm",
+        "title": "Auto Accept V2: Refresh Swarm Mode (bust cache)"
+      },
+      {
+        "command": "autoAcceptV2.toggleSwarmPause",
+        "title": "Auto Accept V2: Pause/Resume Swarm Mode"
+      },
+      {
+        "command": "autoAcceptV2.telegramPair",
+        "title": "Auto Accept V2: Connect Telegram Bot"
+      },
+      {
+        "command": "autoAcceptV2.telegramUnpair",
+        "title": "Auto Accept V2: Disconnect Telegram Bot"
+      }
     ],
-    "activationEvents": [
-        "*"
+    "keybindings": [
+      {
+        "command": "autoAcceptV2.toggleSwarmPause",
+        "key": "ctrl+shift+s",
+        "when": "true"
+      }
     ],
-    "main": "./src/extension.js",
-    "contributes": {
-        "commands": [
-            {
-                "command": "autoAcceptV2.toggle",
-                "title": "Auto Accept V2: Toggle ON/OFF"
-            },
-            {
-                "command": "autoAcceptV2.dashboard",
-                "title": "Auto Accept V2: Open Dashboard"
-            }
-        ],
-        "configuration": {
-            "title": "Auto Accept V2",
-            "properties": {
-                "autoAcceptV2.pollInterval": {
-                    "type": "number",
-                    "default": 500,
-                    "scope": "window",
-                    "description": "Polling interval in milliseconds"
-                },
-                "autoAcceptV2.customButtonTexts": {
-                    "type": "array",
-                    "default": [],
-                    "items": {
-                        "type": "string"
-                    },
-                    "scope": "application",
-                    "description": "Extra button texts to auto-click (for i18n or custom UI). E.g. ['toujours autoriser', 'siempre permitir']"
-                },
-                "autoAcceptV2.cdpPort": {
-                    "type": "number",
-                    "default": 9333,
-                    "scope": "machine",
-                    "description": "The localhost port for Chrome DevTools Protocol. (Default 9333 avoids conflicts with AG Browser Control)."
-                },
-                "autoAcceptV2.autoAcceptFileEdits": {
-                    "type": "boolean",
-                    "default": true,
-                    "scope": "window",
-                    "description": "Auto-accept file edits (acceptAgentStep). Set to false to review diffs before accepting."
-                },
-                "autoAcceptV2.blockedCommands": {
-                    "type": "array",
-                    "default": [],
-                    "items": {
-                        "type": "string"
-                    },
-                    "scope": "application",
-                    "description": "Terminal command patterns to NEVER auto-run (e.g. 'rm -rf', 'git push --force', 'DROP TABLE'). Matched case-insensitively."
-                },
-                "autoAcceptV2.allowedCommands": {
-                    "type": "array",
-                    "default": [],
-                    "items": {
-                        "type": "string"
-                    },
-                    "scope": "application",
-                    "description": "If non-empty, ONLY auto-run terminal commands matching these patterns. Blocklist takes priority over allowlist."
-                },
-                "autoAcceptV2.autoRetryEnabled": {
-                    "type": "boolean",
-                    "default": true,
-                    "scope": "window",
-                    "description": "Auto-click Retry and Continue buttons when the agent hits errors or invocation limits. Disable to prevent automatic retries."
-                },
-                "autoAcceptV2.proLicenseKey": {
-                    "type": "string",
-                    "default": "",
-                    "scope": "machine-overridable",
-                    "description": "AntiGravity AutoAccept Pro license key — enables Swarm Mode (automatic background agent management across all Agent Manager conversations). Get yours at https://yazanbaker.gumroad.com/l/antigravity-pro"
-                },
-                "autoAcceptV2.swarmIdleSeconds": {
-                    "type": "number",
-                    "default": 15,
-                    "minimum": 3,
-                    "maximum": 60,
-                    "scope": "window",
-                    "description": "Seconds of user inactivity before Swarm Mode navigates to a pending chat. Higher = less interruption. (Pro feature, requires Swarm Mode license)"
-                }
-            }
+    "configuration": {
+      "title": "Auto Accept V2",
+      "properties": {
+        "autoAcceptV2.pollInterval": {
+          "type": "number",
+          "default": 500,
+          "scope": "window",
+          "description": "Polling interval in milliseconds"
+        },
+        "autoAcceptV2.customButtonTexts": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "scope": "application",
+          "description": "Extra button texts to auto-click (for i18n or custom UI). E.g. ['toujours autoriser', 'siempre permitir']"
+        },
+        "autoAcceptV2.cdpPort": {
+          "type": "number",
+          "default": 9333,
+          "scope": "machine",
+          "description": "The localhost port for Chrome DevTools Protocol. (Default 9333 avoids conflicts with AG Browser Control)."
+        },
+        "autoAcceptV2.autoAcceptFileEdits": {
+          "type": "boolean",
+          "default": true,
+          "scope": "window",
+          "description": "Auto-accept file edits (acceptAgentStep). Set to false to review diffs before accepting."
+        },
+        "autoAcceptV2.blockedCommands": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "scope": "application",
+          "description": "Terminal command patterns to NEVER auto-run (e.g. 'rm -rf', 'git push --force', 'DROP TABLE'). Matched case-insensitively."
+        },
+        "autoAcceptV2.allowedCommands": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "scope": "application",
+          "description": "If non-empty, ONLY auto-run terminal commands matching these patterns. Blocklist takes priority over allowlist."
+        },
+        "autoAcceptV2.autoRetryEnabled": {
+          "type": "boolean",
+          "default": true,
+          "scope": "window",
+          "description": "Auto-click Retry and Continue buttons when the agent hits errors or invocation limits. Disable to prevent automatic retries."
+        },
+        "autoAcceptV2.proLicenseKey": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "description": "AntiGravity AutoAccept Pro license key — enables Swarm Mode (automatic background agent management across all Agent Manager conversations). Get yours at https://yazanbaker.gumroad.com/l/antigravity-pro"
+        },
+        "autoAcceptV2.swarmIdleSeconds": {
+          "type": "number",
+          "default": 15,
+          "minimum": 3,
+          "maximum": 60,
+          "scope": "window",
+          "description": "Seconds of user inactivity before Swarm Mode navigates to a pending chat. Higher = less interruption. (Pro feature, requires Swarm Mode license)"
         }
-    },
-    "scripts": {
-        "package": "npx -y @vscode/vsce package",
-        "test": "echo \"Error: no test specified\" && exit 1"
-    },
-    "repository": {
-        "type": "git",
-        "url": "git+https://github.com/yazanbaker94/AntiGravity-AutoAccept.git"
-    },
-    "keywords": [],
-    "author": "",
-    "license": "ISC",
-    "bugs": {
-        "url": "https://github.com/yazanbaker94/AntiGravity-AutoAccept/issues"
-    },
-    "homepage": "https://github.com/yazanbaker94/AntiGravity-AutoAccept#readme",
-    "dependencies": {
-        "ws": "^8.19.0"
+      }
     }
+  },
+  "scripts": {
+    "obfuscate": "node scripts/obfuscate.js",
+    "restore": "node scripts/restore.js",
+    "package": "npx -y @vscode/vsce package",
+    "package-prod": "node scripts/build-prod.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yazanbaker94/AntiGravity-AutoAccept.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/yazanbaker94/AntiGravity-AutoAccept/issues"
+  },
+  "homepage": "https://github.com/yazanbaker94/AntiGravity-AutoAccept#readme",
+  "dependencies": {
+    "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "javascript-obfuscator": "^5.4.1"
+  }
 }

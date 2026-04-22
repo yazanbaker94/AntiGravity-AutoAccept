@@ -16,3 +16,7 @@ vsix_check
 temp_extract
 *.zip
 worker/
+
+# Cloudflare credentials
+.env.local
+worker/aa-swarm/scripts/.env.local
