@@ -17,13 +17,31 @@ Antigravity's Agent Manager can only interact with the **active conversation**. 
 
 **Start 5 agents. Minimize the window. Walk away. Swarm handles everything.**
 
-| Plan | Price | Link |
-|------|-------|------|
-| Monthly | $9/mo | [**Get Monthly →**](https://yazanbake.gumroad.com/l/auto-accept-monthly) |
-| Yearly | $79/yr (save 27%) | [**Get Yearly →**](https://yazanbake.gumroad.com/l/auto-accept-yearly) |
-| Lifetime | $199 one-time | [**Get Lifetime →**](https://yazanbake.gumroad.com/l/auto-accept-lifetime) |
+| | |
+|---|---|
+| 💰 **Price** | **$9/mo** (with free trial) |
+| 🔗 **Get Pro** | [**Start Free Trial →**](https://yazanbake.gumroad.com/l/auto-accept) |
 
 📖 **[Full Swarm Mode Guide →](docs/guide/swarm-mode-guide.md)** — Setup, activation, usage, and FAQ.
+
+### 📱 Telegram Remote Control
+
+> **Control your agents from your phone.**
+
+Pair your IDE with Telegram to send prompts, receive responses with screenshots, and manage all your agent windows remotely.
+
+| Command | Description |
+|---|---|
+| `/list` | Show & select active agents |
+| `/peek` | Screenshot your live IDE |
+| `/pause` | Pause AutoAccept + Swarm |
+| `/resume` | Resume everything |
+| `/stop` | Emergency stop all agents |
+| `/status` | Check IDE connection |
+| `/help` | Show all commands |
+| `/disconnect` | Unpair from this IDE |
+
+📖 **[Telegram Setup Guide →](docs/guide/swarm-mode-guide.md#-telegram-remote-control)** — Pairing, commands, and architecture.
 
 ---
 
