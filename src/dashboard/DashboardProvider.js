@@ -218,6 +218,9 @@ class DashboardProvider {
             case 'telegramUnpair':
                 vscode.commands.executeCommand('autoAcceptV2.telegramUnpair');
                 break;
+            case 'fixConversations':
+                vscode.commands.executeCommand('autoAcceptV2.fixConversations');
+                break;
             case 'dismissMilestone': {
                 this._context.globalState.update('autoAcceptLastDismissedMilestone', msg.value);
                 this._pushState();
@@ -567,6 +570,13 @@ class DashboardProvider {
         </div>
     </div>
 
+    <!-- Utilities -->
+    <div class="card">
+        <div class="card-title">&#128736; Utilities</div>
+        <button class="btn" id="btn-fix-convos" style="width:100%;padding:10px;cursor:pointer;font-size:13px;background:linear-gradient(135deg,#667eea,#764ba2);border:none;color:#fff;font-weight:600;border-radius:6px;transition:opacity 0.2s" onclick="fixConversations()" onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='1'">&#128269; Fix Missing Conversations</button>
+        <div style="font-size:11px;opacity:0.5;margin-top:6px">Recovers lost sidebar history by rebuilding the conversation index from disk. AntiGravity will restart automatically.</div>
+    </div>
+
     <!-- Activity Log (Diagnostics at absolute bottom) -->
     <div class="card">
         <div class="card-title">&#128203; Activity Log</div>
@@ -589,6 +599,14 @@ class DashboardProvider {
     let _pendingDiag = false;
 
     function toggle() { vscode.postMessage({ type: 'toggle' }); }
+
+    function fixConversations() {
+        const btn = document.getElementById('btn-fix-convos');
+        btn.textContent = '⏳ Applying fix... AG will restart';
+        btn.style.opacity = '0.6';
+        btn.disabled = true;
+        vscode.postMessage({ type: 'fixConversations' });
+    }
 
     function copyDiagDump() {
         if (_pendingDiag) return;

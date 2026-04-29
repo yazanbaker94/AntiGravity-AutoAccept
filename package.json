@@ -2,7 +2,7 @@
   "name": "antigravity-autoaccept",
   "displayName": "AntiGravity AutoAccept",
   "description": "Auto-accept Run, Accept, and Always Allow buttons in Antigravity via CDP with Webview Guard isolation.",
-  "version": "3.26.5",
+  "version": "3.27.18",
   "publisher": "YazanBaker",
   "icon": "images/icon.png",
   "engines": {
@@ -40,6 +40,10 @@
       {
         "command": "autoAcceptV2.telegramUnpair",
         "title": "Auto Accept V2: Disconnect Telegram Bot"
+      },
+      {
+        "command": "autoAcceptV2.fixConversations",
+        "title": "Auto Accept V2: Fix Missing Conversations"
       }
     ],
     "keybindings": [
@@ -139,6 +143,7 @@
   },
   "homepage": "https://github.com/yazanbaker94/AntiGravity-AutoAccept#readme",
   "dependencies": {
+    "sql.js": "^1.14.1",
     "ws": "^8.19.0"
   },
   "devDependencies": {

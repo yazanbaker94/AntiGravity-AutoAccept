@@ -405,7 +405,11 @@ class ConnectionManager {
         if (url) {
             const titleLower = (title || '').toLowerCase();
             const isSwarmTarget = titleLower === 'manager' || titleLower === 'launchpad' || url.includes('jetski-agent');
-            if (!isSwarmTarget) {
+            // Issue #61: In AG 1.23.2+ (VS Code OSS 1.107.0), all workspace windows share the same
+            // vscode-file://...workbench.desktop.main.html URL. Exempt these from URL dedup —
+            // they're distinguished by targetId and title. Non-workbench pages still dedup normally.
+            const isWorkbenchPage = url.startsWith('vscode-file://');
+            if (!isSwarmTarget && !isWorkbenchPage) {
                 for (const [existingTid, info] of this.sessions) {
                     if (info.url && info.url === url) {
                         this.log(`[CDP] DIAG: Skipping ${shortId} (${(title || 'untitled').substring(0,20)}) — duplicate URL of ${existingTid.substring(0,6)}`);

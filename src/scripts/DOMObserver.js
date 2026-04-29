@@ -21,11 +21,11 @@ function buildDOMObserverScript(customTexts, blockedCommands, allowedCommands, a
     window.__AA_OBSERVER_ACTIVE = true;
 
     function isAgentPanel() {
-        // No markers, no window flags — pure structural detection only.
-        // Anything that touches document or window bleeds across panels in Antigravity.
-        return !!(document.querySelector('.react-app-container') ||
-            document.querySelector('[class*="agent"]') ||
-            document.querySelector('[data-vscode-context]'));
+        // Legacy DOM markers (.react-app-container, [class*="agent"], [data-vscode-context])
+        // no longer exist in VS Code OSS 1.107.0+ (AG 1.23.2+).
+        // ConnectionManager already gates injection to valid targets before calling burst-inject,
+        // so this in-script guard is redundant. Always return true. (Issue #61)
+        return true;
     }
 
     // ⚡ STRUCTURAL SIDEBAR GUARD: Short ambiguous words like "run" can appear as chat titles
@@ -34,11 +34,49 @@ function buildDOMObserverScript(customTexts, blockedCommands, allowedCommands, a
     // Strategy: If the matched text is short (≤8 chars), verify the clickable element is NOT
     // inside a sidebar list/tree container. Long unique phrases like "always allow" are safe.
     var AMBIGUOUS_TEXTS = { 'run': true, 'accept': true, 'allow': true, 'retry': true, 'continue': true };
-    var SIDEBAR_SELECTORS = '[role="tree"], [role="treeitem"], [role="listbox"], [role="option"], .monaco-list, .conversation-list, .chat-list, .sidebar-list';
+    var SIDEBAR_SELECTORS = '[role="tree"], [role="treeitem"], [role="listbox"], [role="option"], .monaco-list, .conversation-list, .chat-list, .sidebar-list, [data-testid*="convo"], [data-testid*="trajectory"], [class*="conversation-list"], [class*="trajectory"], [class*="history"], [class*="past-chat"], [class*="chat-history"]';
+    // ⚡ LIST CONTAINER SELECTORS: Scrollable containers that hold conversation history items.
+    // These are parents of clickable list items — NOT action buttons.
+    var LIST_CONTAINER_SELECTORS = SIDEBAR_SELECTORS + ', [class*="overflow-y"][class*="cursor-pointer"], nav, [role="navigation"], [role="menu"], [role="menubar"]';
 
     function isSidebarElement(el) {
         if (!el || !el.closest) return false;
-        return !!el.closest(SIDEBAR_SELECTORS);
+        if (el.closest(SIDEBAR_SELECTORS)) return true;
+        // ⚡ CONVERSATION LIST HEURISTIC: If the element is a cursor-pointer+select-none div
+        // inside a scrollable container with many similar siblings, it's a list item, not a button.
+        return isConversationListItem(el);
+    }
+
+    // ⚡ SECONDARY GUARD: Detects conversation list items by structural heuristics.
+    // Conversation history entries are typically select-none+cursor-pointer divs inside
+    // a scrollable container with 3+ similar siblings. Action buttons are standalone.
+    function isConversationListItem(el) {
+        if (!el || !el.parentElement) return false;
+        var classes = el.className || '';
+        // Fast path: check for Antigravity's known conversation item class pattern
+        if (typeof classes === 'string' && classes.indexOf('select-none') !== -1 && classes.indexOf('cursor-pointer') !== -1 && classes.indexOf('rounded') !== -1) {
+            return true;
+        }
+        // ⚡ PAST CHATS PANEL GUARD: Walk up 6 levels (deeper than before) to catch
+        // history overlay panels. Threshold stays at 3+ to avoid blocking Run buttons
+        // inside the chat message list (which is also scrollable with 2+ children).
+        var parent = el.parentElement;
+        for (var up = 0; up < 6 && parent && parent !== document.body; up++) {
+            var pClass = parent.className || '';
+            var isScrollable = false;
+            if (typeof pClass === 'string' && (pClass.indexOf('overflow-y') !== -1 || pClass.indexOf('overflow-auto') !== -1 || pClass.indexOf('overflow-scroll') !== -1 || pClass.indexOf('scroll') !== -1)) {
+                isScrollable = true;
+            }
+            if (!isScrollable) {
+                try { var cs = window.getComputedStyle(parent); isScrollable = (cs.overflowY === 'auto' || cs.overflowY === 'scroll'); } catch(e) {}
+            }
+            if (isScrollable && parent.children.length >= 3) {
+                // Scrollable container with 3+ children — this is a list, not a button group
+                return true;
+            }
+            parent = parent.parentElement;
+        }
+        return false;
     }
 
     var BUTTON_TEXTS = ${JSON.stringify(allTexts)};
@@ -94,11 +132,23 @@ function buildDOMObserverScript(customTexts, blockedCommands, allowedCommands, a
     function closestClickable(node) {
         var el = node;
         while (el && el !== document.body) {
+            // ⚡ GUARD: Abort upward walk if we enter a sidebar/list container.
+            // This prevents promoting conversation list items to click targets.
+            if (el !== node && el.matches && (function() { try { return el.matches(LIST_CONTAINER_SELECTORS); } catch(e) { return false; } })()) {
+                return null; // Hit a list container — this node is NOT an action button
+            }
             var tag = (el.tagName || '').toLowerCase();
             if (tag === 'button' || tag === 'a' || tag.includes('button') || tag.includes('btn') ||
                 el.getAttribute('role') === 'button' || el.getAttribute('role') === 'link' ||
                 el.classList.contains('cursor-pointer') ||
-                el.onclick || el.getAttribute('tabindex') === '0') { return el; }
+                el.onclick || el.getAttribute('tabindex') === '0') {
+                // ⚡ FINAL CHECK: Reject if it's a conversation list item.
+                // EXCEPTION: Real semantic <button> and <a> elements are ALWAYS valid click
+                // targets — conversation history items are divs/spans, never button tags.
+                var isSemanticTag = (tag === 'button' || tag === 'a');
+                if (!isSemanticTag && isConversationListItem(el)) return null;
+                return el;
+            }
             el = el.parentElement;
         }
         return node;
@@ -174,15 +224,33 @@ function buildDOMObserverScript(customTexts, blockedCommands, allowedCommands, a
                 if (!isMatch) continue;
 
                 var clickable = closestClickable(wNode);
+                if (!clickable) continue; // ⚡ closestClickable returned null — inside a list container
                 var tag2 = (clickable.tagName || '').toLowerCase();
                 var isExpandType = (text === 'expand' && nodeText === 'expand') || text === 'requires input';
 
                 // ⚡ STRUCTURAL SIDEBAR GUARD for ambiguous short words
                 // "run", "accept", "allow" etc. can appear as chat titles in the sidebar.
-                // We only block if: (a) text is an ambiguous keyword AND (b) the element is inside a sidebar container.
-                // Long unique phrases like "always allow", "requires input" are never in sidebar titles.
-                if (AMBIGUOUS_TEXTS[text] && isSidebarElement(clickable)) {
+                // We only block if: (a) text is an ambiguous keyword AND (b) the element is inside
+                // a sidebar container AND (c) it is NOT a real semantic <button>/<a>.
+                // Conversation history items are always divs — never actual button tags.
+                var isSemanticTag2 = (tag2 === 'button' || tag2 === 'a');
+                if (!isSemanticTag2 && AMBIGUOUS_TEXTS[text] && isSidebarElement(clickable)) {
                     continue; // Skip — this is a sidebar chat title, not an action button
+                }
+
+                // ⚡ PROPER BUTTON TAG GUARD for ambiguous keywords (Issue #62)
+                // After clicking a real <button>, the MutationObserver fires and can match
+                // an adjacent sibling <div> that also contains "run"/"accept" text (e.g. labels,
+                // VS Code menu items, activity bar entries, status indicators).
+                // These divs match because of cursor-pointer but are NOT action buttons.
+                // Fix: For ambiguous keywords, ONLY click semantic button elements.
+                if (AMBIGUOUS_TEXTS[text]) {
+                    var isSemanticButton = tag2 === 'button' || tag2 === 'a' ||
+                        (clickable.getAttribute('role') === 'button') ||
+                        (clickable.getAttribute('role') === 'link');
+                    if (!isSemanticButton) {
+                        continue; // Skip — not a real button, just a div with cursor-pointer
+                    }
                 }
 
                 if (tag2 === 'button' || tag2 === 'a' || tag2.includes('button') || tag2.includes('btn') ||

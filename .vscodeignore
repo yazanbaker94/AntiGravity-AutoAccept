@@ -16,3 +16,8 @@ docs/
 scripts/
 deepthink_analysis.md
 monthly.html
+**/*.src
+**/sql.js/dist/sql-asm*
+**/sql.js/dist/sql-wasm-browser*
+**/sql.js/dist/sql-wasm-debug*
+**/sql.js/dist/worker.*

@@ -7,6 +7,7 @@ const cp = require('child_process');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { ConnectionManager } = require('./cdp/ConnectionManager');
 const { DashboardProvider } = require('./dashboard/DashboardProvider');
 const { pingTelemetry } = require('./telemetry');
@@ -625,6 +626,22 @@ async function checkAndFixCDP() {
         }
     }
 
+    // ── Port Discovery: scan nearby ports for AG ───────────────────
+    // AG might be running on a different port (e.g. after conversation fix
+    // relaunch, or manual restart without the shortcut).
+    for (let scanPort = 9333; scanPort <= 9340; scanPort++) {
+        if (scanPort === configPort) continue; // Already checked
+        if (await pingPort(scanPort)) {
+            log(`[CDP] 🔍 Found AG on port ${scanPort} (configured: ${configPort}). Auto-switching...`);
+            await vscode.workspace.getConfiguration('autoAcceptV2').update('cdpPort', scanPort, vscode.ConfigurationTarget.Global);
+            applyPermanentWindowsPatch(scanPort);
+            vscode.window.showInformationMessage(
+                `AutoAccept found AntiGravity on port ${scanPort}. Config updated automatically. ✓`
+            );
+            return true;
+        }
+    }
+
     // Port refused — prompt user
     log(`[CDP] ⚠ Port ${configPort} refused — remote debugging not enabled`);
     vscode.window.showErrorMessage(
@@ -722,6 +739,141 @@ else { Write-Output "NOT_FOUND" }
             }
         });
 }
+
+// ─── Conversation Guard ──────────────────────────────────────────────
+
+/**
+ * Spawns a detached worker that waits for AG to exit, rebuilds the
+ * conversation index from .pb files on disk, and relaunches AG.
+ */
+function runConversationFix() {
+    const workerPath = path.join(__dirname, 'scripts', 'conversationFix.js');
+
+    const cdpPort = getConfiguredPort();
+    const workspaceFolders = (vscode.workspace.workspaceFolders || []).map(f => f.uri.fsPath);
+    
+    // ⚡ CRITICAL FIX: Pass the Main Process PID so the worker knows 
+    // exactly when the Chromium Single-Instance Lock is released!
+    const mainPid = process.env.VSCODE_PID ? parseInt(process.env.VSCODE_PID, 10) : process.ppid;
+    const relaunchInfo = JSON.stringify({ cdpPort, workspaceFolders, mainPid });
+
+    const child = cp.spawn(process.execPath, [workerPath, process.pid.toString(), relaunchInfo], {
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+        detached: true,
+        stdio: 'ignore',
+    });
+    child.unref();
+
+    log('[ConvGuard] Detached fixer spawned. Quitting AG...');
+    // Quit immediately, as the user already confirmed via the modal
+    vscode.commands.executeCommand('workbench.action.quit');
+}
+
+/**
+ * Lazy auto-detection: loads sql.js to read the actual sidebar index count
+ * from state.vscdb and compares against .pb files on disk.
+ * Shows exact numbers: "100 on disk but only 80 in sidebar — 20 missing"
+ */
+async function detectMissingConversations(context) {
+    try {
+        const convDir = path.join(os.homedir(), '.gemini', 'antigravity', 'conversations');
+        if (!fs.existsSync(convDir)) return;
+
+        const pbFiles = fs.readdirSync(convDir).filter(f => f.endsWith('.pb'));
+        const onDisk = pbFiles.length;
+        if (onDisk === 0) return;
+
+        // Read actual sidebar index count from state.vscdb
+        const isWin = process.platform === 'win32';
+        const isMac = process.platform === 'darwin';
+        const dbPath = isWin
+            ? path.join(process.env.APPDATA, 'antigravity', 'User', 'globalStorage', 'state.vscdb')
+            : isMac
+                ? path.join(os.homedir(), 'Library', 'Application Support', 'antigravity', 'User', 'globalStorage', 'state.vscdb')
+                : path.join(os.homedir(), '.config', 'Antigravity', 'User', 'globalStorage', 'state.vscdb');
+
+        if (!fs.existsSync(dbPath)) return;
+
+        // Lazy-load sql.js (only here, only once, 15s after startup)
+        let indexCount = 0;
+        let db;
+        try {
+            const extRoot = path.resolve(__dirname, '..');
+            const wasmPath = path.join(extRoot, 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm');
+            const initSqlJs = require(path.join(extRoot, 'node_modules', 'sql.js'));
+            const SQL = await initSqlJs({ locateFile: () => wasmPath });
+            const dbBuffer = fs.readFileSync(dbPath);
+            db = new SQL.Database(dbBuffer);
+
+            const rows = db.exec("SELECT value FROM ItemTable WHERE key='antigravityUnifiedStateSync.trajectorySummaries'");
+            if (rows.length && rows[0].values.length && rows[0].values[0][0]) {
+                // Count UUID entries in the protobuf — each entry has a UUID pattern
+                const b64Value = rows[0].values[0][0];
+                const decoded = Buffer.from(b64Value, 'base64');
+                // Quick count: scan for field 1 (UUID strings) in the top-level repeated message
+                let pos = 0;
+                while (pos < decoded.length) {
+                    try {
+                        let tag, tagEnd;
+                        ({ value: tag, pos: tagEnd } = decodeVarintLight(decoded, pos));
+                        if ((tag & 7) !== 2) break;
+                        let entryLen;
+                        ({ value: entryLen, pos } = decodeVarintLight(decoded, tagEnd));
+                        pos += entryLen;
+                        indexCount++;
+                    } catch (e) { break; }
+                }
+            }
+        } catch (e) {
+            log(`[ConvGuard] sql.js detection error: ${e.message}`);
+            return; // Can't read DB — skip detection silently
+        } finally {
+            // Guarantee WASM memory is freed even if db.exec throws
+            if (db) { try { db.close(); } catch(e) {} }
+        }
+
+        const missing = onDisk - indexCount;
+        log(`[ConvGuard] Detection: ${onDisk} on disk, ${indexCount} in sidebar index, ${missing} missing`);
+
+        // Update baseline for future reference
+        context.globalState.update('aa_lastConvCount', onDisk);
+
+        // UX GUARD: Don't spam if they already dismissed this exact missing count
+        const dismissedCount = context.globalState.get('aa_dismissedMissingCount', -1);
+
+        if (missing > 2 && missing !== dismissedCount) {
+            vscode.window.showWarningMessage(
+                `Your history has ${onDisk} chats but the sidebar only shows ${indexCount} — ${missing} conversations are missing.`,
+                'Fix Now',
+                'Dismiss'
+            ).then(action => {
+                if (action === 'Fix Now') {
+                    // Clear dismiss state so it monitors normally after a fix
+                    context.globalState.update('aa_dismissedMissingCount', -1);
+                    runConversationFix();
+                } else if (action === 'Dismiss') {
+                    // Silence the popup until the missing count changes again
+                    context.globalState.update('aa_dismissedMissingCount', missing);
+                }
+            });
+        }
+    } catch (e) {
+        log(`[ConvGuard] Detection error: ${e.message}`);
+    }
+}
+
+/** Lightweight varint decoder for detection (no dependency on worker script) */
+function decodeVarintLight(buffer, offset) {
+    let result = 0, shift = 0, pos = offset || 0;
+    while (pos < buffer.length) {
+        const byte = buffer[pos++];
+        result += (byte & 0x7F) * Math.pow(2, shift);
+        if ((byte & 0x80) === 0) break;
+        shift += 7;
+    }
+    return { value: result, pos };
+}
+
 
 // ─── Activation ───────────────────────────────────────────────────────
 function activate(context) {
@@ -925,6 +1077,16 @@ function activate(context) {
             dashboardProvider.show();
         })
     );
+
+    // ── Conversation Guard: Fix Missing Conversations ──
+    context.subscriptions.push(
+        vscode.commands.registerCommand('autoAcceptV2.fixConversations', () => {
+            runConversationFix();
+        })
+    );
+
+    // Lazy auto-detection: 15s after activation (avoids cold-start bloat)
+    setTimeout(() => detectMissingConversations(context), 15000);
 
 
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
