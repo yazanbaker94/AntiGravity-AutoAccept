@@ -243,13 +243,15 @@ function buildDOMObserverScript(customTexts, blockedCommands, allowedCommands, a
                 // an adjacent sibling <div> that also contains "run"/"accept" text (e.g. labels,
                 // VS Code menu items, activity bar entries, status indicators).
                 // These divs match because of cursor-pointer but are NOT action buttons.
-                // Fix: For ambiguous keywords, ONLY click semantic button elements.
-                if (AMBIGUOUS_TEXTS[text]) {
+                // Fix: For BARE single-word ambiguous keywords, ONLY click semantic elements.
+                // Multi-word phrases like "accept all" are specific enough to pass through —
+                // the "Accept all" file edit bar uses a non-semantic <div>. (GH Issue #62)
+                if (AMBIGUOUS_TEXTS[text] && nodeText === text) {
                     var isSemanticButton = tag2 === 'button' || tag2 === 'a' ||
                         (clickable.getAttribute('role') === 'button') ||
                         (clickable.getAttribute('role') === 'link');
                     if (!isSemanticButton) {
-                        continue; // Skip — not a real button, just a div with cursor-pointer
+                        continue; // Skip — bare ambiguous word on a non-semantic element
                     }
                 }
 
