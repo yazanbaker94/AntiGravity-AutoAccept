@@ -1,11 +1,13 @@
 # AntiGravity AutoAccept
-<!-- v3.13.8 safety presets + bulk blocked commands -->
+<!-- v3.27.29 sponsor GIF + conversation fix -->
 
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/yazanbaker)
 
-> **📢 Sponsor this extension** — With **40,000+ installs** and an active user base, your brand gets prime placement on every user's dashboard. Reach developers who automate their workflows daily. Contact **autoaccept@sakinahtime.com** to get started.
-
 Automatically accept agent steps, terminal commands, file edits, and permission prompts in [Antigravity](https://antigravity.dev) — Google's AI coding assistant.
+
+<p align="center">
+  <img src="images/commandcodeai.gif" alt="AntiGravity AutoAccept Demo" width="600" />
+</p>
 
 ---
 
@@ -139,7 +141,7 @@ alias antigravity='antigravity --remote-debugging-port=9333'
 **Manual:**
 1. Copy the `src/` directory, `package.json`, and `package-lock.json` to:
    ```
-   ~/.antigravity/extensions/YazanBaker.antigravity-autoaccept-3.13.6/
+   ~/.antigravity/extensions/YazanBaker.antigravity-autoaccept-3.27.29/
    ```
 2. Run `npm install` in that directory (installs `ws` dependency)
 3. Reload Window

@@ -20,3 +20,13 @@ worker/
 # Cloudflare credentials
 .env.local
 worker/aa-swarm/scripts/.env.local
+
+# Temp/test files
+temp-fix.js
+test-brain.txt
+test-fallback.txt
+test-out.txt
+test_decode.js
+guide pictures/
+monthly.html
+.antigravityignore

@@ -39,7 +39,9 @@ class DashboardProvider {
             {
                 enableScripts: true,
                 retainContextWhenHidden: true,
-                localResourceRoots: []
+                localResourceRoots: [
+                    vscode.Uri.file(path.join(this._context.extensionPath, 'images'))
+                ]
             }
         );
 
@@ -47,7 +49,10 @@ class DashboardProvider {
             path.join(this._context.extensionPath, 'images', 'icon.png')
         );
 
-        this._panel.webview.html = this._getHtml();
+        const gifUri = this._panel.webview.asWebviewUri(
+            vscode.Uri.file(path.join(this._context.extensionPath, 'images', 'commandcodeai.gif'))
+        );
+        this._panel.webview.html = this._getHtml(gifUri);
 
         // Handle messages from webview
         this._panel.webview.onDidReceiveMessage(
@@ -235,7 +240,7 @@ class DashboardProvider {
                 const clicks = prev.filter(t => now - t < WEEK_MS);
                 clicks.push(now);
                 this._context.globalState.update('autoAcceptSponsorClicks', clicks);
-                vscode.env.openExternal(vscode.Uri.parse('https://github.com/yazanbaker94/AntiGravity-AutoAccept'));
+                vscode.env.openExternal(vscode.Uri.parse('https://linkly.link/2iuO9'));
                 break;
             }
             case 'getDiagDump': {
@@ -277,12 +282,12 @@ class DashboardProvider {
         }
     }
 
-    _getHtml() {
+    _getHtml(gifUri) {
         return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src ${this._panel.webview.cspSource};">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AutoAccept Dashboard</title>
 <style>
@@ -432,11 +437,8 @@ class DashboardProvider {
     <h1><span class="icon">⚡</span> AutoAccept Dashboard</h1>
 
     <!-- Sponsor Banner (Top placement — maximum visibility) -->
-    <div id="sponsor-slot" tabindex="0" role="button" aria-label="Sponsor this project" style="background:var(--vscode-textBlockQuote-background, rgba(255,255,255,0.04));border:1px solid var(--border);border-radius:8px;padding:16px 18px;margin-bottom:16px;text-align:center;font-size:12px;line-height:1.7">
-        <div style="font-size:13px;font-weight:600;margin-bottom:6px;opacity:0.9">🤝 Keeping AutoAccept Free & Maintained</div>
-        <div style="font-size:11px;opacity:0.6;margin-bottom:8px">I spend 10+ hrs/week updating this tool to match IDE DOM changes. To keep it 100% free forever instead of adding a paywall, this space is reserved for a sponsor.</div>
-        <span style="opacity:0.7" id="sponsor-text">Reach 24,000+ AI developers who automate their workflows.</span><br>
-        <span style="color:var(--vscode-textLink-foreground, var(--accent));font-weight:600">Sponsor this space &#8599;</span>
+    <div id="sponsor-slot" tabindex="0" role="button" aria-label="Sponsor this project" style="background:var(--vscode-textBlockQuote-background, rgba(255,255,255,0.04));border:1px solid var(--border);border-radius:8px;padding:0;margin-bottom:16px;text-align:center;overflow:hidden;line-height:0">
+        <img src="${gifUri}" alt="CommandCode AI — Sponsor" style="width:100%;height:auto;display:block;border-radius:8px" />
     </div>
 
     <!-- Swarm Mode Pro Card -->
